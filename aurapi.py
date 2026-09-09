@@ -953,8 +953,16 @@ def get_table_type(device):
     if r.returncode != 0:
         return None, f"blkid fehlgeschlagen: {r.stderr.strip()}"
     info = _parse_blkid_export(r.stdout)
-    return info.get("PTTYPE"), None
+    table = info.get("PTTYPE")
+    return normalize_table_type(table), None
 
+def normalize_table_type(t):
+    if not t:
+        return t
+    t = t.lower()
+    if t in ("dos", "msdos"):
+        return "msdos"
+        return t
 
 def get_partitions_sorted(device):
     """Liste aller Partitionen mit Offset/Größe/Dateisystem, per blkid
@@ -1005,7 +1013,7 @@ def check_rpi_compatible_layout(device):
     table_type, err = get_table_type(device)
     if err:
         return False, f"Partitionstabelle konnte nicht gelesen werden: {err}"
-    if table_type != "dos":
+    if table_type != "msdos":
         return False, (f"Partitionstabelle ist {table_type!r}, PiShrink benötigt "
                         f"eine MBR-Tabelle ('dos').")
 
