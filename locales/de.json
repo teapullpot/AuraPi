@@ -1,0 +1,270 @@
+{
+  "_meta": {
+    "code": "de",
+    "language": "German",
+    "native_name": "Deutsch",
+    "short": "DE"
+  },
+  "fatal": {
+    "run_as_root": "Bitte AuraPi NICHT als root starten. Das Tool fordert Root-Rechte gezielt per sudo -A selbst an."
+  },
+  "common": {
+    "ok": "OK",
+    "yes": "Ja",
+    "no": "Nein",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "open": "Öffnen",
+    "browse": "Durchsuchen…",
+    "refresh": "Aktualisieren",
+    "retry": "Erneut prüfen",
+    "continue": "Fortfahren?",
+    "ready": "Bereit."
+  },
+  "file_dialog": {
+    "choose": "Datei wählen",
+    "save_as": "Speichern unter",
+    "open_file": "Datei öffnen",
+    "parent": "⬆ Übergeordnet",
+    "filename": "Dateiname:",
+    "all_files": "Alle Dateien",
+    "image_files": "Image-Dateien",
+    "read_dir_error": "Konnte Verzeichnis nicht lesen: {error}"
+  },
+  "askpass": {
+    "title": "AuraPi — Root-Rechte",
+    "heading": "AuraPi benötigt Root-Rechte",
+    "message": "Bitte dein Benutzerpasswort eingeben (gilt für die gesamte Sitzung; keine wiederholte Abfrage nötig):",
+    "cancel": "Abbrechen",
+    "confirm": "Bestätigen"
+  },
+  "tabs": {
+    "backup": "Backup erstellen",
+    "restore": "Image zurückspielen"
+  },
+  "devices": {
+    "none": "Keine Geräte gefunden",
+    "note": "Nur Geräte mit Seriennummer und stabiler by-id-Kennung werden angezeigt.",
+    "removable": "Wechseldatenträger",
+    "none_verified": "Keine verifizierbaren Wechseldatenträger gefunden. Hinweis: Geräte ohne Seriennummer/by-id-Pfad werden aus Sicherheitsgründen nicht angezeigt.",
+    "show_more": "Weitere Medien anzeigen",
+    "show_more_tooltip": "Zeigt zusätzlich Laufwerke ohne Seriennummer oder stabilen by-id-Pfad (z. B. exotische USB-Adapter). Diese können vor dem Schreiben nicht mit derselben Sicherheit erneut identifiziert werden wie andere Geräte - nur aktivieren, wenn du dir absolut sicher bist, welches Gerät ausgewählt ist.",
+    "unstable_tag": "keine stabile Kennung!"
+  },
+  "backup": {
+    "source_label": "Quelle (SD-Karte / USB-Laufwerk)",
+    "target_file_label": "Zieldatei",
+    "mode_title": "Art des Backups",
+    "start": "Backup starten",
+    "cancel": "Backup abbrechen",
+    "cancelling": "Breche ab …",
+    "modes": {
+      "rpi": "Raspberry Pi OS",
+      "other": "Other OS",
+      "full": "Vollständiges Abbild"
+    },
+    "tooltips": {
+      "rpi": "Maximal verkleinert über PiShrink. Nur für Layouts mit FAT-Boot-Partition und ext4-Root-Partition geeignet (Standard bei Raspberry Pi OS) — bricht bei anderen Layouts kontrolliert mit Fehlermeldung ab.",
+      "other": "Kopiert alle Partitionen unverändert bis zum Ende der letzten Partition. Dateisystemunabhängig, aber nicht für jedes Boot-/Partitionierungslayout geeignet — bei GPT-Datenträgern nicht verfügbar (Backup-GPT am Geräteende würde sonst fehlen).",
+      "full": "Kopiert die komplette Karte 1:1, inklusive ungenutztem Speicher. Funktioniert garantiert mit jedem Layout — auch GPT, UBI/UBIFS oder speziellen Bootloadern. Größte Datei, aber die sicherste Wahl bei unbekanntem oder exotischem System."
+    },
+    "pishrink_note": "(nur für Modus \"Raspberry Pi OS\" nötig)",
+    "confirm_title": "Backup bestätigen",
+    "confirm_source": "Quelle:\n{detail}",
+    "confirm_target": "Ziel: {target}",
+    "confirm_mode": "Modus: {mode}",
+    "details": {
+      "model": "Modell: {value}",
+      "serial": "Seriennummer: {value}",
+      "size": "Größe: {value}",
+      "device": "Gerät: {value}"
+    },
+    "errors": {
+      "active_title": "Bitte warten",
+      "active_message": "Es läuft bereits ein Vorgang.",
+      "no_source_title": "Keine Quelle",
+      "no_source_message": "Bitte zuerst ein Quell-Laufwerk auswählen.",
+      "no_target_title": "Kein Ziel",
+      "no_target_message": "Bitte einen Zieldateinamen angeben.",
+      "invalid_target_title": "Ungültiges Ziel",
+      "device_path_target": "Das Ziel darf kein Gerätepfad (/dev/...) sein.",
+      "symlink_target": "Zielpfad ist ein Symlink — abgelehnt.",
+      "wrong_extension_title": "Falsche Dateiendung",
+      "compressed_extension": "Die Modi 'Raspberry Pi OS' und 'Other OS' erzeugen komprimierte Dateien und benötigen die Endung .img.gz.",
+      "full_extension": "Der Modus 'Vollständiges Abbild' erzeugt keine komprimierte Datei. Bitte eine Endung ohne .gz verwenden (z. B. .img).",
+      "file_exists_title": "Datei existiert bereits",
+      "file_exists_message": "{path} existiert bereits. Überschreiben?",
+      "pishrink_title": "PiShrink nicht verifiziert"
+    },
+    "logs": {
+      "started": "=== Backup gestartet: {device} ({model}, S/N {serial}) -> {dest} ===",
+      "inspect_compact": "Ermittle Partitionstabelle und Ende der letzten Partition (Kompakt-Methode) …",
+      "table_detected": "Erkannte Partitionstabelle: {table}",
+      "compact_not_mbr": "Kompakt-Modus ist nur für MBR-Partitionstabellen ('msdos') freigegeben, erkannt wurde: {table}. Bei GPT fehlt sonst das sekundäre GPT-Backup am Geräteende, bei unbekanntem Layout ist die Sicherheit nicht gewährleistet. Bitte 'Vollständiges Abbild' für dieses Gerät verwenden.",
+      "check_rpi_layout": "Prüfe, ob das Layout zu PiShrink passt (MBR + ext2/3/4-Root) …",
+      "rpi_layout_incompatible": "Layout nicht mit dem 'Raspberry Pi OS'-Modus kompatibel: {reason} Bitte 'Other OS' oder 'Vollständiges Abbild' verwenden.",
+      "unmount_source": "Hänge eventuell gemountete Partitionen der Quelle aus (vermeidet Blockaden bei manchen Kartenlesern) …",
+      "unmount_failed": "Nicht alle Partitionen der Quelle konnten ausgehängt werden. Bitte Dateimanager/andere Programme schließen, die die Karte gerade offen haben könnten, dann 'Aktualisieren' klicken und erneut versuchen.",
+      "unmount_warning": "Warnung: Nicht alle Partitionen konnten ausgehängt werden — falls das Backup gleich hängen bleibt, wird es nach 45s automatisch mit einer klaren Meldung abgebrochen.",
+      "after_unmount": "Nach dem Aushängen: {reason}",
+      "copy_compact": "Kopiere {copy_size} von {total_size} (Rest der Karte ist ungenutzt) …",
+      "dd_failed": "dd ist fehlgeschlagen.",
+      "compress": "Komprimiere Abbild …",
+      "validate_image": "Prüfe Integrität des erzeugten Abbilds (Validierungsdurchlauf) …",
+      "image_corrupt": "Erzeugtes Abbild ist beschädigt: {error}",
+      "integrity_mismatch": "Integritätsprüfung fehlgeschlagen: erwartet {expected} Bytes, entpackt {actual} Bytes.",
+      "integrity_ok_compressed": "Integrität OK. SHA-256 (komprimierte Datei): {digest}",
+      "step1": "Schritt 1/2: Rohes Abbild der Karte lesen (Root liest nur, unprivilegiert geschrieben) …",
+      "pishrink_unavailable": "PiShrink nicht mehr verifizierbar: {reason}",
+      "step2": "Schritt 2/2: Abbild mit verifiziertem PiShrink verkleinern und komprimieren …",
+      "shrink_running": "Shrink läuft …",
+      "temp_remove_failed": "Hinweis: Temporäre Datei {path} konnte nicht entfernt werden: {error}",
+      "chown_failed": "Besitz der PiShrink-Ausgabe konnte nicht geändert werden: {error}",
+      "validate_pishrink": "Prüfe Integrität des PiShrink-Abbilds (Validierungsdurchlauf) …",
+      "pishrink_corrupt": "PiShrink-Ausgabe ist beschädigt: {error}",
+      "integrity_ok": "Integrität OK. SHA-256: {digest}",
+      "cancel_cleanup": "Backup abgebrochen - räume unfertige Dateien auf …",
+      "removed": "Entfernt: {path}",
+      "remove_failed": "Hinweis: {path} konnte nicht entfernt werden: {error}",
+      "cancelled": "Vom Nutzer abgebrochen."
+    }
+  },
+  "restore": {
+    "image_file_label": "Image-Datei",
+    "target_drive_label": "Ziel-Laufwerk",
+    "start": "Restore starten",
+    "running": "Restore läuft …",
+    "warning_title": "Achtung:",
+    "warning_body": "Beim Zurückspielen werden ALLE Daten auf dem\nZiellaufwerk unwiderruflich überschrieben.",
+    "errors": {
+      "active_title": "Bitte warten",
+      "active_message": "Es läuft bereits ein Vorgang.",
+      "no_file_title": "Keine Datei",
+      "no_file_message": "Bitte eine gültige Image-Datei auswählen.",
+      "no_access_title": "Kein Zugriff",
+      "no_access_message": "Du hast selbst kein Leserecht auf diese Datei — das Tool nutzt Root nicht, um das zu umgehen.",
+      "no_target_title": "Kein Ziel",
+      "no_target_message": "Bitte ein Ziel-Laufwerk auswählen.",
+      "invalid_selection_title": "Ungültige Auswahl",
+      "image_on_target": "Die Image-Datei liegt selbst auf dem Ziel-Laufwerk ({info}). Restore würde die eigene Quelle während des Schreibens zerstören.",
+      "origin_unknown_title": "Herkunft nicht feststellbar",
+      "origin_unknown": "Es konnte nicht sicher ermittelt werden, ob die Image-Datei auf dem Ziel-Laufwerk liegt ({info}). Aus Sicherheitsgründen wird der Restore in diesem Fall abgelehnt statt es zu riskieren.",
+      "target_too_small_title": "Zielgerät zu klein",
+      "target_too_small": "Image ist {image_size} groß, Ziel hat nur {target_size}."
+    },
+    "confirm": {
+      "title": "Restore bestätigen",
+      "image": "Image:\n{image}",
+      "target": "Ziel:\n{detail}",
+      "warning": "ALLE Daten auf diesem Laufwerk werden GELÖSCHT.\nDiesen Vorgang kann man NICHT rückgängig machen.",
+      "type_exactly": "Zur Bestätigung genau eintippen: {device}",
+      "mismatch": "Eingabe stimmt nicht mit dem Gerätenamen überein."
+    },
+    "logs": {
+      "started": "=== Restore gestartet: {image} -> {device} ({model}, S/N {serial}) ===",
+      "unmount_target": "Hänge eventuell gemountete Partitionen des Ziels aus …",
+      "unmount_failed": "Mindestens eine Partition konnte nicht ausgehängt werden.",
+      "after_unmount": "Nach dem Aushängen: {reason}",
+      "origin_recheck_failed": "Image-Herkunft nach dem Aushängen nicht mehr sicher als unabhängig vom Ziel bestätigbar ({state}: {info}).",
+      "validate_size": "Validiere Image-Größe (vollständiger Durchlauf 1/2) …",
+      "validation_progress": "Validierung: {bytes} Bytes geprüft",
+      "image_read_failed": "Image konnte nicht gelesen/entpackt werden: {error}",
+      "decompressed_too_large": "Entpacktes Image ist {image_size} groß, Ziel hat nur {target_size}.",
+      "validation_ok": "Validierung OK: {size}. Schreibe Durchlauf 2/2 …"
+    }
+  },
+  "pishrink": {
+    "verified": "✓ PiShrink verifiziert (Hash & Root-Besitz OK): {info}",
+    "not_verified": "✗ PiShrink nicht verifiziert ({info}) — siehe Installationsanleitung.",
+    "install_hint": "PiShrink ist nicht installiert oder nicht verifizierbar.\n\nManuelle Installation der GEPRÜFTEN, gepinnten Version:\n\n  curl -fsSL \\\n    https://raw.githubusercontent.com/Drewsif/PiShrink/{commit}/pishrink.sh \\\n    -o /tmp/pishrink.sh\n  sha256sum /tmp/pishrink.sh\n  # muss exakt sein: {sha256}\n  sudo install -o root -g root -m 755 /tmp/pishrink.sh {path}\n\nDanach im Tool auf \"Erneut prüfen\" klicken.",
+    "verify": {
+      "not_found": "nicht gefunden",
+      "stat_failed": "stat fehlgeschlagen: {error}",
+      "not_root": "gehört nicht root (uid={uid})",
+      "writable": "ist von Gruppe/Andere beschreibbar",
+      "hash_mismatch": "Hash stimmt nicht überein (gefunden: {digest}…)"
+    }
+  },
+  "runtime": {
+    "request_root": "Fordere Root-Rechte an (einmalig für diesen Vorgang) …",
+    "unexpected_error": "Unerwarteter Fehler: {error}",
+    "please_wait": "Bitte warten …",
+    "cancel_requested": "Abbruch angefordert - warte auf sauberes Beenden …",
+    "finish": {
+      "success_log": "=== {operation} erfolgreich abgeschlossen. ===",
+      "success_status": "{operation} erfolgreich abgeschlossen.",
+      "success_popup": "{operation} wurde erfolgreich abgeschlossen.",
+      "failure_log": "=== {operation} fehlgeschlagen (Code {code}). {extra} ===",
+      "failure_status": "{operation} fehlgeschlagen. {extra}"
+    }
+  },
+  "operations": {
+    "backup": "Backup",
+    "restore": "Restore"
+  },
+  "system": {
+    "sudo_missing": "sudo nicht gefunden.",
+    "auth_failed": "Root-Authentifizierung fehlgeschlagen: {error}",
+    "binary_missing": "Benötigtes Programm '{name}' wurde nicht gefunden.",
+    "image_source": {
+      "findmnt_missing": "findmnt nicht verfügbar",
+      "source_unknown": "Quell-Laufwerk der Image-Datei konnte nicht ermittelt werden",
+      "parent_unknown": "Übergeordnetes Laufwerk von {source} konnte nicht ermittelt werden"
+    },
+    "device": {
+      "missing": "Gerät {device} ist nicht mehr als verifizierter Wechseldatenträger vorhanden.",
+      "size_changed": "Größe von {device} hat sich geändert ({old} -> {new}). Abbruch zur Sicherheit.",
+      "serial_changed": "Seriennummer von {device} stimmt nicht mehr überein. Abbruch zur Sicherheit.",
+      "model_changed": "Modellbezeichnung von {device} stimmt nicht mehr überein ({old} -> {new}). Abbruch zur Sicherheit."
+    },
+    "unmount": {
+      "attempt": "Hänge {child} aus …",
+      "failed": "Konnte {child} nicht aushängen: {error}",
+      "remounted": "Partition(en) wurden erneut automatisch eingehängt (Auto-Mount-Dienst) — Versuch {attempt}/{retries} …"
+    },
+    "cancel": {
+      "process": "Abbruch angefordert - beende {label} …",
+      "pishrink": "PiShrink-Lauf vom Nutzer abgebrochen.",
+      "read": "Lesevorgang vom Nutzer abgebrochen.",
+      "write": "Schreibvorgang vom Nutzer abgebrochen.",
+      "compression": "Komprimierung vom Nutzer abgebrochen."
+    },
+    "labels": {
+      "operation": "Vorgang",
+      "pishrink_run": "PiShrink-Lauf",
+      "write_operation": "Schreibvorgang"
+    },
+    "backup_io": {
+      "target_symlink": "Zielpfad ist ein Symlink - abgelehnt.",
+      "target_exists": "Zieldatei existiert bereits (keine Überschreib-Bestätigung).",
+      "cancel_read": "Abbruch angefordert - beende Lesevorgang …",
+      "stall": "Kein Lesefortschritt seit {seconds}s — vermutlich blockiert der Kartenleser (z. B. durch eine noch aktiv gemountete Partition). Breche ab.",
+      "read_progress": "{written} von {total} Bytes gelesen",
+      "stall_error": "Lesevorgang nach {seconds}s ohne Fortschritt abgebrochen. Bitte Partitionen manuell aushängen (umount) und erneut versuchen, oder einen anderen Kartenleser/USB-Port probieren."
+    },
+    "restore_io": {
+      "write_progress": "{written} von {total} Bytes geschrieben",
+      "cancelled": "Restore abgebrochen - Zielgerät befindet sich jetzt in einem unvollständigen, nicht bootfähigen Zustand.",
+      "write_error": "Fehler beim Schreiben: {error}"
+    },
+    "partition": {
+      "unknown_size": "Unbekannte parted-Größe: {value}",
+      "blkid_missing": "blkid nicht gefunden",
+      "blkid_timeout": "blkid antwortete nicht innerhalb von {seconds}s",
+      "blkid_failed": "blkid fehlgeschlagen: {error}",
+      "table_read_failed": "Partitionstabelle konnte nicht gelesen werden: {error}",
+      "table_wrong": "Partitionstabelle ist {table}, PiShrink benötigt eine MBR-Tabelle ('dos').",
+      "partitions_read_failed": "Partitionen konnten nicht einzeln gelesen werden.",
+      "too_few": "Es wurden weniger als zwei Partitionen gefunden.",
+      "last_fs_wrong": "Letzte Partition hat Dateisystem {filesystem}, PiShrink benötigt ext2/ext3/ext4.",
+      "layout_ok": "Layout kompatibel (MBR, letzte Partition {filesystem})."
+    },
+    "compression": {
+      "cancel_request": "Abbruch angefordert - beende Komprimierung …",
+      "progress": "Komprimiere: {written} von {total} Bytes"
+    },
+    "gzip": {
+      "too_large": "Entpacktes Image überschreitet bereits nach {current} die Zielgröße von {max_size} — Abbruch."
+    }
+  }
+}
