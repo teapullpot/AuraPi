@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AuraPi - GUI-Tool für Ubuntu/Linux zum Sichern und Zurückspielen von
+AuraPi v0.1.25 - GUI-Tool für Ubuntu/Linux zum Sichern und Zurückspielen von
 SD-Karten & USB-Sticks (z.B. Raspberry-Pi-Systeme).
 
 ÜBERBLICK
@@ -9,10 +9,10 @@ Python 3 + CustomTkinter (Dark Mode, Navy-Farbtheme, siehe
 aurapi_navy_theme.json). Drei Backup-Modi (Raspberry Pi OS / Other OS /
 Vollständiges Abbild) und ein Restore-Modus, jeweils mit eigenem Tab.
 Wortmarke und Icon sind als Base64-PNG direkt im Code eingebettet (siehe
-_WORDMARK_PNG_B64 / _ICON_STILL_B64 / _ICON_ANIM_B64) - die App ist damit
-eine einzelne, eigenständige .py-Datei ohne externe Bild-Assets. Einzige
-externe Datei ist das Farbtheme (aurapi_navy_theme.json), das im selben
-Verzeichnis liegen muss.
+_WORDMARK_PNG_B64 / _ICON_STILL_B64 / _ICON_ANIM_B64). Extern liegen das
+Farbtheme (aurapi_navy_theme.json) sowie die Sprachdateien unter locales/.
+Englisch ist Haupt- und Fallback-Sprache; weitere *.json-Locales werden
+automatisch erkannt.
 
 SICHERHEITSARCHITEKTUR (aktueller Stand)
 -----------------------------------------
@@ -110,28 +110,149 @@ from tkinter import filedialog, messagebox
 from PIL import Image, ImageSequence
 import customtkinter as ctk
 
+
+APP_VERSION = "0.1.25"
+DEFAULT_LANGUAGE = "en"
+FALLBACK_LANGUAGE = "en"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCALES_DIR = os.path.join(BASE_DIR, "locales")
+
+
+class LocaleManager:
+    """JSON based i18n with English as canonical fallback locale."""
+
+    def __init__(self, locale_dir, default=DEFAULT_LANGUAGE, fallback=FALLBACK_LANGUAGE):
+        self.locale_dir = locale_dir
+        self.default = default
+        self.fallback = fallback
+        self.locales = {}
+        self.language = default
+        self.reload()
+        if self.fallback not in self.locales:
+            raise RuntimeError(
+                f"AuraPi locale error: required fallback locale '{self.fallback}.json' "
+                f"is missing or invalid in {self.locale_dir}"
+            )
+        if self.default not in self.locales:
+            self.default = self.fallback
+        self.language = self.default
+        self._report_missing_keys()
+        self._sync_environment()
+
+    def reload(self):
+        self.locales = {}
+        if not os.path.isdir(self.locale_dir):
+            return
+        for name in sorted(os.listdir(self.locale_dir)):
+            if not name.lower().endswith(".json"):
+                continue
+            path = os.path.join(self.locale_dir, name)
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if not isinstance(data, dict):
+                    raise ValueError("locale root must be a JSON object")
+                meta = data.get("_meta", {})
+                code = str(meta.get("code") or os.path.splitext(name)[0]).lower()
+                self.locales[code] = data
+            except Exception as exc:
+                print(f"[AuraPi] Ignoring invalid locale {path}: {exc}", file=sys.stderr)
+
+    @staticmethod
+    def _lookup(data, key):
+        value = data
+        for part in key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+        return value if isinstance(value, str) else None
+
+    @staticmethod
+    def _flatten_keys(data, prefix=""):
+        keys = set()
+        for key, value in data.items():
+            if key == "_meta":
+                continue
+            full = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                keys.update(LocaleManager._flatten_keys(value, full))
+            elif isinstance(value, str):
+                keys.add(full)
+        return keys
+
+    def _report_missing_keys(self):
+        master = self.locales.get(self.fallback, {})
+        master_keys = self._flatten_keys(master)
+        for code, data in self.locales.items():
+            if code == self.fallback:
+                continue
+            missing = sorted(master_keys - self._flatten_keys(data))
+            if missing:
+                print(
+                    f"[AuraPi] Locale '{code}' is missing {len(missing)} key(s); "
+                    f"English fallback will be used: {', '.join(missing[:8])}" +
+                    (" …" if len(missing) > 8 else ""),
+                    file=sys.stderr,
+                )
+
+    def _sync_environment(self):
+        os.environ["AURAPI_LANG"] = self.language
+        os.environ["AURAPI_LOCALES_DIR"] = self.locale_dir
+
+    def set_language(self, code):
+        code = str(code).lower()
+        if code not in self.locales:
+            code = self.fallback
+        self.language = code
+        self._sync_environment()
+        return self.language
+
+    def t(self, key, **kwargs):
+        value = self._lookup(self.locales.get(self.language, {}), key)
+        if value is None:
+            value = self._lookup(self.locales.get(self.fallback, {}), key)
+        if value is None:
+            value = f"[{key}]"
+        if kwargs:
+            try:
+                return value.format(**kwargs)
+            except (KeyError, ValueError, IndexError) as exc:
+                print(f"[AuraPi] Locale format error for '{key}': {exc}", file=sys.stderr)
+        return value
+
+    def language_choices(self):
+        items = []
+        for code, data in self.locales.items():
+            meta = data.get("_meta", {}) if isinstance(data, dict) else {}
+            label = str(meta.get("short") or code.upper())
+            items.append((label, code))
+        items.sort(key=lambda item: (item[1] != self.default, item[0].casefold()))
+        return items
+
+
+I18N = LocaleManager(LOCALES_DIR)
+
+
+def tr(key, **kwargs):
+    return I18N.t(key, **kwargs)
+
 GZIP_ERRORS = (OSError, EOFError, gzip.BadGzipFile, zlib.error)
 
 if os.geteuid() == 0:
-    sys.exit("Bitte NICHT als root starten. Das Tool fordert Root-Rechte "
-              "gezielt per sudo -A selbst an.")
+    sys.exit(tr("fatal.run_as_root"))
 
 PISHRINK_PATH = "/usr/local/bin/pishrink.sh"
 PISHRINK_PINNED_COMMIT = "5f358d03eed4b7334657ee93867826a2b42f112a"
 PISHRINK_PINNED_SHA256 = "71026f0c02ac099e588a3eb8f70760c1b680aa8ea3acde61a0141fbaeb68c777"
 
-PISHRINK_INSTALL_HINT = f"""PiShrink ist nicht installiert oder nicht verifizierbar.
+def pishrink_install_hint():
+    return tr(
+        "pishrink.install_hint",
+        commit=PISHRINK_PINNED_COMMIT,
+        sha256=PISHRINK_PINNED_SHA256,
+        path=PISHRINK_PATH,
+    )
 
-Manuelle Installation der GEPRÜFTEN, gepinnten Version:
-
-  curl -fsSL \\
-    https://raw.githubusercontent.com/Drewsif/PiShrink/{PISHRINK_PINNED_COMMIT}/pishrink.sh \\
-    -o /tmp/pishrink.sh
-  sha256sum /tmp/pishrink.sh
-  # muss exakt sein: {PISHRINK_PINNED_SHA256}
-  sudo install -o root -g root -m 755 /tmp/pishrink.sh {PISHRINK_PATH}
-
-Danach im Tool auf "Erneut prüfen" klicken."""
 
 
 class SafetyError(Exception):
@@ -159,13 +280,46 @@ class OperationCancelled(Exception):
 # selbst wird über SUDO_ASKPASS auf ein eigenes, zum App-Look passendes
 # Skript umgeleitet, statt den nativen PolicyKit-Dialog zu zeigen.
 
-ASKPASS_SCRIPT = '''#!/usr/bin/env python3
+ASKPASS_SCRIPT = r'''#!/usr/bin/env python3
+import json
+import os
 import sys
 import tkinter as tk
 
+
+def _load_t():
+    lang = os.environ.get("AURAPI_LANG", "en").lower()
+    locale_dir = os.environ.get("AURAPI_LOCALES_DIR", "")
+
+    def load(code):
+        try:
+            with open(os.path.join(locale_dir, code + ".json"), "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    current = load(lang)
+    fallback = load("en")
+
+    def lookup(data, key):
+        value = data
+        for part in key.split("."):
+            if not isinstance(value, dict) or part not in value:
+                return None
+            value = value[part]
+        return value if isinstance(value, str) else None
+
+    def t(key, hard_fallback):
+        return lookup(current, key) or lookup(fallback, key) or hard_fallback
+
+    return t
+
+
 def main():
+    t = _load_t()
     root = tk.Tk()
-    root.title("AuraPi — Root-Rechte")
+    root.title(t("askpass.title", "AuraPi — Root privileges"))
     root.attributes("-topmost", True)
     root.configure(bg="#1a1a2e")
     root.resizable(False, False)
@@ -178,17 +332,16 @@ def main():
     frame = tk.Frame(root, bg="#1a1a2e")
     frame.pack(fill="both", expand=True, padx=24, pady=22)
 
-    tk.Label(frame, text="AuraPi benötigt Root-Rechte",
+    tk.Label(frame, text=t("askpass.heading", "AuraPi requires root privileges"),
              bg="#1a1a2e", fg="#e8e8e8", font=("Sans", 13, "bold")).pack(anchor="w")
-    tk.Label(frame, text="Bitte dein Benutzerpasswort eingeben (gilt für die\\n"
-                          "gesamte Sitzung, keine wiederholte Abfrage nötig):",
-             bg="#1a1a2e", fg="#a0a0b0", font=("Sans", 10), justify="left").pack(
-        anchor="w", pady=(6, 14))
+    tk.Label(frame, text=t("askpass.message", "Enter your user password:"),
+             bg="#1a1a2e", fg="#a0a0b0", font=("Sans", 10), justify="left",
+             wraplength=390).pack(anchor="w", pady=(6, 14))
 
     entry = tk.Entry(frame, show="*", bg="#252540", fg="#ffffff",
-                      insertbackground="#ffffff", relief="flat",
-                      highlightthickness=2, highlightbackground="#3a7ebf",
-                      highlightcolor="#5b9bd5", font=("Sans", 12))
+                     insertbackground="#ffffff", relief="flat",
+                     highlightthickness=2, highlightbackground="#3a7ebf",
+                     highlightcolor="#5b9bd5", font=("Sans", 12))
     entry.pack(fill="x", ipady=8)
     entry.focus_set()
 
@@ -205,12 +358,13 @@ def main():
 
     btns = tk.Frame(frame, bg="#1a1a2e")
     btns.pack(fill="x", pady=(18, 0))
-    tk.Button(btns, text="Abbrechen", command=cancel, bg="#333350", fg="#e0e0e0",
-              relief="flat", padx=16, pady=7, activebackground="#444470",
-              activeforeground="#ffffff").pack(side="right", padx=(10, 0))
-    tk.Button(btns, text="Bestaetigen", command=submit, bg="#3a7ebf", fg="#ffffff",
-              relief="flat", padx=16, pady=7, activebackground="#5b9bd5",
-              activeforeground="#ffffff").pack(side="right")
+    tk.Button(btns, text=t("askpass.cancel", "Cancel"), command=cancel,
+              bg="#333350", fg="#e0e0e0", relief="flat", padx=16, pady=7,
+              activebackground="#444470", activeforeground="#ffffff").pack(
+                  side="right", padx=(10, 0))
+    tk.Button(btns, text=t("askpass.confirm", "Confirm"), command=submit,
+              bg="#3a7ebf", fg="#ffffff", relief="flat", padx=16, pady=7,
+              activebackground="#5b9bd5", activeforeground="#ffffff").pack(side="right")
 
     root.protocol("WM_DELETE_WINDOW", cancel)
     root.mainloop()
@@ -219,6 +373,7 @@ def main():
         sys.exit(1)
     sys.stdout.write(result["pw"])
     sys.stdout.flush()
+
 
 if __name__ == "__main__":
     main()
@@ -254,7 +409,7 @@ def privileged(args):
     eines Terminal-Prompts nutzt."""
     sudo = shutil.which("sudo")
     if not sudo:
-        raise RuntimeError("sudo nicht gefunden.")
+        raise RuntimeError(tr("system.sudo_missing"))
     return [sudo, "-A"] + args
 
 
@@ -276,10 +431,10 @@ def prime_sudo_session():
     sauber beendet, wenn der Vorgang abgeschlossen ist."""
     sudo = shutil.which("sudo")
     if not sudo:
-        raise RuntimeError("sudo nicht gefunden.")
+        raise RuntimeError(tr("system.sudo_missing"))
     r = subprocess.run([sudo, "-A", "-v"], capture_output=True, text=True)
     if r.returncode != 0:
-        raise RuntimeError(f"Root-Authentifizierung fehlgeschlagen: {r.stderr.strip()}")
+        raise RuntimeError(tr("system.auth_failed", error=r.stderr.strip()))
 
     stop_event = threading.Event()
 
@@ -294,7 +449,7 @@ def prime_sudo_session():
 def require_bin(name):
     path = shutil.which(name)
     if not path:
-        raise RuntimeError(f"Benötigtes Programm '{name}' wurde nicht gefunden.")
+        raise RuntimeError(tr("system.binary_missing", name=name))
     return path
 
 
@@ -306,22 +461,22 @@ def verify_pishrink():
     """Gibt (True, pfad) zurück, nur wenn Hash, Besitzer und Rechte passen."""
     path = PISHRINK_PATH
     if not os.path.isfile(path):
-        return False, "nicht gefunden"
+        return False, tr("pishrink.verify.not_found")
     try:
         st = os.stat(path)
     except OSError as e:
-        return False, f"stat fehlgeschlagen: {e}"
+        return False, tr("pishrink.verify.stat_failed", error=e)
     if st.st_uid != 0:
-        return False, f"gehört nicht root (uid={st.st_uid})"
+        return False, tr("pishrink.verify.not_root", uid=st.st_uid)
     if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return False, "ist von Gruppe/Andere beschreibbar"
+        return False, tr("pishrink.verify.writable")
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     digest = h.hexdigest()
     if digest != PISHRINK_PINNED_SHA256:
-        return False, f"Hash stimmt nicht überein (gefunden: {digest[:16]}…)"
+        return False, tr("pishrink.verify.hash_mismatch", digest=digest[:16])
     return True, path
 
 
@@ -423,11 +578,16 @@ def human_size(n):
     return f"{n:.1f} PB"
 
 
-def list_removable_devices():
+def list_removable_devices(include_unstable=False):
     """Nur Wechseldatenträger, die (a) nachweislich nicht Teil des Systems
     sind (LVM/RAID/LUKS/ZFS/gemountet) UND (b) stabil identifizierbar sind
     (Seriennummer + by-id-Pfad vorhanden). Fehlt (b), wird das Gerät NICHT
-    angezeigt (fail closed)."""
+    angezeigt (fail closed) - AUSSER include_unstable=True wurde explizit
+    vom Nutzer angefordert ("Weitere Medien anzeigen"-Transparenzfilter).
+    Auch dann werden solche Geräte klar als instabil markiert
+    (unstable=True) und im Anzeigetext entsprechend gekennzeichnet, da sie
+    ohne by-id-Pfad nicht mit derselben Sicherheit vor dem Schreibvorgang
+    re-verifiziert werden können wie normale Geräte."""
     devices = []
     try:
         tree = get_lsblk_tree()
@@ -446,19 +606,35 @@ def list_removable_devices():
         devpath = node.get("path") or f"/dev/{node['name']}"
         serial = (node.get("serial") or "").strip()
         by_id = get_by_id_path(devpath)
-        if not serial or not by_id:
-            # Fail closed: ohne stabile Identität keine Freigabe.
-            continue
         size_bytes = int(node.get("size") or 0)
         model = (node.get("model") or "").strip()
+        if not serial or not by_id:
+            if not include_unstable:
+                # Fail closed: ohne stabile Identität keine Freigabe.
+                continue
+            devices.append({
+                "device": devpath,        # kein by-id verfügbar - Rohpfad
+                "raw_device": devpath,
+                "size_bytes": size_bytes,
+                "model": model,
+                "serial": serial,
+                "transport": tran,
+                "unstable": True,
+                "display": (f"⚠ {devpath}  —  {human_size(size_bytes)}  —  "
+                            f"{model or tran.upper() or tr('devices.removable')}"
+                            f"  ({tr('devices.unstable_tag')})")
+            })
+            continue
         devices.append({
             "device": by_id,          # <- ab jetzt konsequent der by-id-Pfad
             "raw_device": devpath,    # nur zur Anzeige/zum Vergleich
             "size_bytes": size_bytes,
             "model": model,
             "serial": serial,
+            "transport": tran,
+            "unstable": False,
             "display": (f"{devpath}  —  {human_size(size_bytes)}  —  "
-                        f"{model or tran.upper() or 'Wechseldatenträger'}"
+                        f"{model or tran.upper() or tr('devices.removable')}"
                         f"  (S/N {serial})")
         })
     return devices
@@ -516,33 +692,50 @@ def image_is_on_device(image_path, target_device_realpath):
     Ergebnis ist kein Freibrief, sondern ein Grund zur Vorsicht."""
     findmnt = shutil.which("findmnt")
     if not findmnt:
-        return "unknown", "findmnt nicht verfügbar"
+        return "unknown", tr("system.image_source.findmnt_missing")
     d = os.path.dirname(os.path.abspath(image_path)) or "/"
     r = subprocess.run([findmnt, "-no", "SOURCE", "-T", d],
                         capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
-        return "unknown", "Quell-Laufwerk der Image-Datei konnte nicht ermittelt werden"
+        return "unknown", tr("system.image_source.source_unknown")
     source = r.stdout.strip()
     disk = disk_of_partition(source)
     if disk is None:
-        return "unknown", f"Übergeordnetes Laufwerk von {source} konnte nicht ermittelt werden"
+        return "unknown", tr("system.image_source.parent_unknown", source=source)
     if os.path.realpath(disk) == target_device_realpath:
         return "on", disk
     return "off", disk
 
 
 def reverify_device(expected):
-    current = {d["device"]: d for d in list_removable_devices()}
+    """Verifiziert unmittelbar vor dem Schreibvorgang erneut, dass das
+    Zielgerät noch dasselbe ist. Für normale Geräte über den stabilen
+    by-id-Pfad (bleibt korrekt, auch wenn sich /dev/sdX-Buchstaben durch
+    Ein-/Ausstecken anderer Geräte zwischenzeitlich verschoben haben).
+
+    Für per "Weitere Medien anzeigen" freigegebene instabile Geräte (kein
+    by-id/Seriennummer vorhanden) ist diese Garantie NICHT möglich - hier
+    wird bestmöglich über Rohpfad + Modell + Größe re-verifiziert. Das ist
+    schwächer: wurde zwischenzeitlich ein anderes Gerät mit zufällig
+    gleichem Modellnamen und ähnlicher Größe an denselben Slot
+    angeschlossen, kann das nicht zuverlässig erkannt werden."""
+    is_unstable = expected.get("unstable", False)
+    current = {d["device"]: d for d in list_removable_devices(include_unstable=is_unstable)}
     dev = expected["device"]
     if dev not in current:
-        return False, f"Gerät {dev} ist nicht mehr als verifizierter Wechseldatenträger vorhanden."
+        return False, tr("system.device.missing", device=dev)
     now = current[dev]
     if now["size_bytes"] != expected["size_bytes"]:
-        return False, (f"Größe von {dev} hat sich geändert "
-                        f"({human_size(expected['size_bytes'])} -> "
-                        f"{human_size(now['size_bytes'])}). Abbruch zur Sicherheit.")
+        return False, tr("system.device.size_changed", device=dev,
+                         old=human_size(expected["size_bytes"]),
+                         new=human_size(now["size_bytes"]))
+    if is_unstable:
+        if now.get("model") != expected.get("model"):
+            return False, tr("system.device.model_changed", device=dev,
+                             old=expected.get("model"), new=now.get("model"))
+        return True, ""
     if now.get("serial") != expected.get("serial"):
-        return False, f"Seriennummer von {dev} stimmt nicht mehr überein. Abbruch zur Sicherheit."
+        return False, tr("system.device.serial_changed", device=dev)
     return True, ""
 
 
@@ -569,10 +762,10 @@ def _unmount_pass(devpath, log_cb):
         find_mp(tree)
         if not mounted:
             continue
-        log_cb(f"Hänge {child} aus …")
+        log_cb(tr("system.unmount.attempt", child=child))
         r = subprocess.run(privileged([umount, child]), capture_output=True, text=True)
         if r.returncode != 0:
-            log_cb(f"Konnte {child} nicht aushängen: {r.stderr.strip()}")
+            log_cb(tr("system.unmount.failed", child=child, error=r.stderr.strip()))
             ok = False
     return ok
 
@@ -608,8 +801,7 @@ def unmount_all_partitions(devpath, log_cb, retries=3, retry_delay=1.5):
         if not still_mounted:
             return True
         if attempt < retries:
-            log_cb(f"Partition(en) wurden erneut automatisch eingehängt "
-                   f"(Auto-Mount-Dienst) — Versuch {attempt + 1}/{retries} …")
+            log_cb(tr("system.unmount.remounted", attempt=attempt + 1, retries=retries))
     return not still_mounted
 
 
@@ -630,7 +822,7 @@ def _flatten_tree(nodes):
 # Privilegierte Ausführung
 # --------------------------------------------------------------------------
 
-def _start_cancel_watcher(proc, cancel_event, cancelled_flag, log_cb, label="Vorgang"):
+def _start_cancel_watcher(proc, cancel_event, cancelled_flag, log_cb, label=None):
     """Startet einen Hintergrund-Thread, der bei gesetztem cancel_event den
     übergebenen Prozess SOFORT beendet (im Unterschied zum zeitbasierten
     Stillstands-Watchdog, der erst nach Sekunden reagiert). cancelled_flag
@@ -640,11 +832,13 @@ def _start_cancel_watcher(proc, cancel_event, cancelled_flag, log_cb, label="Vor
     (Aufrufstellen ohne Abbruch-Unterstützung, z. B. kurze blkid-Aufrufe)."""
     if cancel_event is None:
         return None
+    if label is None:
+        label = tr("system.labels.operation")
 
     def watch():
         cancel_event.wait()
         cancelled_flag["flag"] = True
-        log_cb(f"Abbruch angefordert - beende {label} …")
+        log_cb(tr("system.cancel.process", label=label))
         try:
             proc.kill()
         except Exception:
@@ -660,7 +854,7 @@ def run_pkexec(args, log_cb, progress_cb=None, total_bytes=0, cancel_event=None)
     proc = subprocess.Popen(privileged(args), stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True, bufsize=1)
     cancelled = {"flag": False}
-    _start_cancel_watcher(proc, cancel_event, cancelled, log_cb, label="PiShrink-Lauf")
+    _start_cancel_watcher(proc, cancel_event, cancelled, log_cb, label=tr("system.labels.pishrink_run"))
     buf = ""
     while True:
         ch = proc.stdout.read(1)
@@ -683,7 +877,7 @@ def run_pkexec(args, log_cb, progress_cb=None, total_bytes=0, cancel_event=None)
             buf += ch
     proc.wait()
     if cancelled["flag"]:
-        raise OperationCancelled("PiShrink-Lauf vom Nutzer abgebrochen.")
+        raise OperationCancelled(tr("system.cancel.pishrink"))
     return proc.returncode
 
 
@@ -704,9 +898,9 @@ def backup_device_to_file(device, dest_final, log_cb, progress_cb, total_bytes,
     dest_final = os.path.abspath(dest_final)
 
     if os.path.islink(dest_final):
-        raise SafetyError("Zielpfad ist ein Symlink - abgelehnt.")
+        raise SafetyError(tr("system.backup_io.target_symlink"))
     if os.path.exists(dest_final) and not overwrite:
-        raise SafetyError("Zieldatei existiert bereits (keine Überschreib-Bestätigung).")
+        raise SafetyError(tr("system.backup_io.target_exists"))
 
     dest_tmp = dest_final + ".part"
     if os.path.islink(dest_tmp):
@@ -745,7 +939,7 @@ def backup_device_to_file(device, dest_final, log_cb, progress_cb, total_bytes,
         # sofort reagiert. Die Stillstandserkennung selbst bleibt bei 45s.
         while not stop_watchdog.wait(0.3):
             if cancel_event is not None and cancel_event.is_set():
-                log_cb("Abbruch angefordert - beende Lesevorgang …")
+                log_cb(tr("system.backup_io.cancel_read"))
                 cancelled["flag"] = True
                 try:
                     proc.kill()
@@ -753,9 +947,7 @@ def backup_device_to_file(device, dest_final, log_cb, progress_cb, total_bytes,
                     pass
                 break
             if time.monotonic() - last_activity[0] > STALL_TIMEOUT_SECONDS:
-                log_cb(f"Kein Lesefortschritt seit {STALL_TIMEOUT_SECONDS}s — "
-                       f"vermutlich blockiert der Kartenleser (z. B. durch eine "
-                       f"noch aktiv gemountete Partition). Breche ab.")
+                log_cb(tr("system.backup_io.stall", seconds=STALL_TIMEOUT_SECONDS))
                 stalled["flag"] = True
                 # Gezielter Kill des sudo/dd-Prozesses. KEIN killpg mehr:
                 # ohne eigene Prozess-Session (start_new_session wurde
@@ -787,7 +979,7 @@ def backup_device_to_file(device, dest_final, log_cb, progress_cb, total_bytes,
                 written += len(chunk)
                 if progress_cb and total_bytes:
                     progress_cb(min(100.0, written * 100.0 / total_bytes),
-                                f"{written} von {total_bytes} Bytes gelesen")
+                                tr("system.backup_io.read_progress", written=written, total=total_bytes))
     finally:
         stop_watchdog.set()
         try:
@@ -803,17 +995,14 @@ def backup_device_to_file(device, dest_final, log_cb, progress_cb, total_bytes,
             os.remove(dest_tmp)
         except Exception:
             pass
-        raise OperationCancelled("Lesevorgang vom Nutzer abgebrochen.")
+        raise OperationCancelled(tr("system.cancel.read"))
 
     if stalled["flag"]:
         try:
             os.remove(dest_tmp)
         except Exception:
             pass
-        raise SafetyError(
-            f"Lesevorgang nach {STALL_TIMEOUT_SECONDS}s ohne Fortschritt abgebrochen. "
-            f"Bitte Partitionen manuell aushängen (umount) und erneut versuchen, "
-            f"oder einen anderen Kartenleser/USB-Port probieren.")
+        raise SafetyError(tr("system.backup_io.stall_error", seconds=STALL_TIMEOUT_SECONDS))
 
     if proc.returncode != 0:
         try:
@@ -852,7 +1041,7 @@ def run_pkexec_stdin_pipe(args, data_source_fn, total_bytes, log_cb, progress_cb
     reader.start()
 
     cancelled = {"flag": False}
-    _start_cancel_watcher(proc, cancel_event, cancelled, log_cb, label="Schreibvorgang")
+    _start_cancel_watcher(proc, cancel_event, cancelled, log_cb, label=tr("system.labels.write_operation"))
 
     written = 0
     write_error = None
@@ -868,7 +1057,7 @@ def run_pkexec_stdin_pipe(args, data_source_fn, total_bytes, log_cb, progress_cb
             written += len(chunk)
             if progress_cb and total_bytes:
                 progress_cb(min(100.0, written * 100.0 / total_bytes),
-                            f"{written} von {total_bytes} Bytes geschrieben")
+                            tr("system.restore_io.write_progress", written=written, total=total_bytes))
     finally:
         try:
             proc.stdin.close()
@@ -879,11 +1068,10 @@ def run_pkexec_stdin_pipe(args, data_source_fn, total_bytes, log_cb, progress_cb
     for line in out_lines[-5:]:
         log_cb(line)
     if cancelled["flag"]:
-        log_cb("Restore abgebrochen - Zielgerät befindet sich jetzt in einem "
-               "unvollständigen, nicht bootfähigen Zustand.")
-        raise OperationCancelled("Schreibvorgang vom Nutzer abgebrochen.")
+        log_cb(tr("system.restore_io.cancelled"))
+        raise OperationCancelled(tr("system.cancel.write"))
     if write_error:
-        log_cb(f"Fehler beim Schreiben: {write_error}")
+        log_cb(tr("system.restore_io.write_error", error=write_error))
         return -1 if proc.returncode == 0 else proc.returncode
     return proc.returncode
 
@@ -901,7 +1089,7 @@ def parse_parted_bytes(value):
                 return int(float(number) * factor)
             except ValueError:
                 break
-    raise ValueError(f"Unbekannte parted-Größe: {value}")
+    raise ValueError(tr("system.partition.unknown_size", value=value))
 
 
 BLKID_TIMEOUT_SECONDS = 10
@@ -947,11 +1135,11 @@ def get_table_type(device):
     parted - mit echtem Loop-Device-Test verifiziert, nicht nur angenommen."""
     r = run_blkid(["-p", "-o", "export", device])
     if r is None:
-        return None, "blkid nicht gefunden"
+        return None, tr("system.partition.blkid_missing")
     if r == "timeout":
-        return None, f"blkid antwortete nicht innerhalb von {BLKID_TIMEOUT_SECONDS}s"
+        return None, tr("system.partition.blkid_timeout", seconds=BLKID_TIMEOUT_SECONDS)
     if r.returncode != 0:
-        return None, f"blkid fehlgeschlagen: {r.stderr.strip()}"
+        return None, tr("system.partition.blkid_failed", error=r.stderr.strip())
     info = _parse_blkid_export(r.stdout)
     table = info.get("PTTYPE")
     return normalize_table_type(table), None
@@ -1012,23 +1200,21 @@ def check_rpi_compatible_layout(device):
     Gibt (ok: bool, grund: str) zurück."""
     table_type, err = get_table_type(device)
     if err:
-        return False, f"Partitionstabelle konnte nicht gelesen werden: {err}"
+        return False, tr("system.partition.table_read_failed", error=err)
     if table_type != "msdos":
-        return False, (f"Partitionstabelle ist {table_type!r}, PiShrink benötigt "
-                        f"eine MBR-Tabelle ('dos').")
+        return False, tr("system.partition.table_wrong", table=repr(table_type))
 
     partitions = get_partitions_sorted(device)
     if partitions is None:
-        return False, "Partitionen konnten nicht einzeln gelesen werden."
+        return False, tr("system.partition.partitions_read_failed")
     if len(partitions) < 2:
-        return False, "Es wurden weniger als zwei Partitionen gefunden."
+        return False, tr("system.partition.too_few")
 
     last_fstype = partitions[-1]["fstype"]
     if last_fstype not in ("ext2", "ext3", "ext4"):
-        return False, (f"Letzte Partition hat Dateisystem {last_fstype!r}, "
-                        f"PiShrink benötigt ext2/ext3/ext4.")
+        return False, tr("system.partition.last_fs_wrong", filesystem=repr(last_fstype))
 
-    return True, f"Layout kompatibel (MBR, letzte Partition {last_fstype})."
+    return True, tr("system.partition.layout_ok", filesystem=last_fstype)
 
 
 def compact_copy_size(device, device_size_bytes):
@@ -1046,7 +1232,10 @@ def compact_copy_size(device, device_size_bytes):
     Fällt bei sonstigen Problemen sicher auf die volle Gerätegröße zurück."""
     table_type, err = get_table_type(device)
     if err:
-        return device_size_bytes, ("timeout" if "nicht innerhalb" in err else None)
+        # Do not inspect localized text to detect a timeout. Re-probe with the
+        # raw helper so program logic stays language-independent.
+        probe = run_blkid(["-p", "-o", "export", device])
+        return device_size_bytes, ("timeout" if probe == "timeout" else None)
 
     partitions = get_partitions_sorted(device)
     if not partitions:
@@ -1076,8 +1265,8 @@ def gzip_compress_file(src_path, dest_final, log_cb, progress_cb=None, cancel_ev
         with open(src_path, "rb") as fin, gzip.open(dest_tmp, "wb") as fout:
             while True:
                 if cancel_event is not None and cancel_event.is_set():
-                    log_cb("Abbruch angefordert - beende Komprimierung …")
-                    raise OperationCancelled("Komprimierung vom Nutzer abgebrochen.")
+                    log_cb(tr("system.compression.cancel_request"))
+                    raise OperationCancelled(tr("system.cancel.compression"))
                 chunk = fin.read(4 * 1024 * 1024)
                 if not chunk:
                     break
@@ -1085,7 +1274,7 @@ def gzip_compress_file(src_path, dest_final, log_cb, progress_cb=None, cancel_ev
                 written += len(chunk)
                 if progress_cb and total:
                     progress_cb(min(100.0, written * 100.0 / total),
-                                f"Komprimiere: {written} von {total} Bytes")
+                                tr("system.compression.progress", written=written, total=total))
         # Hash über die tatsächlich geschriebene (komprimierte) Datei bilden
         with open(dest_tmp, "rb") as f:
             for chunk in iter(lambda: f.read(4 * 1024 * 1024), b""):
@@ -1133,9 +1322,8 @@ def full_gzip_size(path, progress_cb=None, max_size=None):
                 break
             total += len(chunk)
             if max_size and total > max_size:
-                raise SafetyError(
-                    f"Entpacktes Image überschreitet bereits nach {human_size(total)} "
-                    f"die Zielgröße von {human_size(max_size)} — Abbruch.")
+                raise SafetyError(tr("system.gzip.too_large", current=human_size(total),
+                                     max_size=human_size(max_size)))
             if progress_cb:
                 progress_cb(total)
     return total
@@ -2401,27 +2589,24 @@ AAABAAEAAAICTAEAIfkEBQgAAQAsAAAAAAEAAQAAAgJMAQA7
 
 
 class CTkFileDialog(ctk.CTkToplevel):
-    """Einfacher, zum App-Look passender Datei-Dialog (Speichern/Öffnen)
-    als Ersatz für den nativen tkinter.filedialog, der das System-Dark-
-    Theme nicht übernimmt. Kein vollwertiger Dateimanager - einfache
-    Verzeichnisnavigation, Dateiliste, Endungsfilter, Dateiname-Feld."""
+    """Simple AuraPi-styled file dialog with locale-aware UI strings."""
 
-    def __init__(self, parent, mode="save", title="Datei wählen",
-                 initial_dir=None, initial_file="", filetypes=(("Alle Dateien", "*"),)):
+    def __init__(self, parent, mode="save", title=None,
+                 initial_dir=None, initial_file="", filetypes=None):
         super().__init__(parent)
-        self.mode = mode  # "save" oder "open"
-        self.filetypes = filetypes
+        self.mode = mode
+        self.filetypes = filetypes or ((tr("file_dialog.all_files"), "*"),)
         self.result_path = None
         self.current_dir = os.path.abspath(initial_dir or os.path.expanduser("~"))
 
-        self.title(title)
+        self.title(title or tr("file_dialog.choose"))
         self.geometry("640x480")
         self.transient(parent)
         self.grab_set()
 
         top_row = ctk.CTkFrame(self, fg_color="transparent")
         top_row.pack(fill="x", padx=16, pady=(16, 8))
-        ctk.CTkButton(top_row, text="⬆ Übergeordnet", width=130, corner_radius=10,
+        ctk.CTkButton(top_row, text=tr("file_dialog.parent"), width=130, corner_radius=10,
                       command=self._go_up).pack(side="left")
         self.path_var = tk.StringVar(value=self.current_dir)
         path_entry = ctk.CTkEntry(top_row, textvariable=self.path_var, corner_radius=10)
@@ -2433,7 +2618,8 @@ class CTkFileDialog(ctk.CTkToplevel):
 
         bottom = ctk.CTkFrame(self, fg_color="transparent")
         bottom.pack(fill="x", padx=16, pady=(4, 16))
-        ctk.CTkLabel(bottom, text="Dateiname:").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ctk.CTkLabel(bottom, text=tr("file_dialog.filename")).grid(
+            row=0, column=0, sticky="w", pady=(0, 8))
         self.filename_var = tk.StringVar(value=initial_file)
         fn_entry = ctk.CTkEntry(bottom, textvariable=self.filename_var, corner_radius=10)
         fn_entry.grid(row=0, column=1, sticky="we", padx=8, pady=(0, 8))
@@ -2442,9 +2628,10 @@ class CTkFileDialog(ctk.CTkToplevel):
 
         btn_row = ctk.CTkFrame(bottom, fg_color="transparent")
         btn_row.grid(row=1, column=0, columnspan=2, sticky="e")
-        ctk.CTkButton(btn_row, text="Abbrechen", corner_radius=10, fg_color="gray30",
-                      command=self._cancel).pack(side="right", padx=(8, 0))
-        action_label = "Speichern" if mode == "save" else "Öffnen"
+        ctk.CTkButton(btn_row, text=tr("common.cancel"), corner_radius=10,
+                      fg_color="gray30", command=self._cancel).pack(
+                          side="right", padx=(8, 0))
+        action_label = tr("common.save") if mode == "save" else tr("common.open")
         ctk.CTkButton(btn_row, text=action_label, corner_radius=10,
                       command=self._confirm).pack(side="right")
 
@@ -2464,7 +2651,8 @@ class CTkFileDialog(ctk.CTkToplevel):
         try:
             entries = sorted(os.scandir(directory), key=lambda e: (not e.is_dir(), e.name.lower()))
         except OSError as e:
-            ctk.CTkLabel(self.listbox_frame, text=f"Konnte Verzeichnis nicht lesen: {e}",
+            ctk.CTkLabel(self.listbox_frame,
+                         text=tr("file_dialog.read_dir_error", error=e),
                          text_color="#EF5350").pack(anchor="w", padx=6, pady=4)
             return
         for entry in entries:
@@ -2511,27 +2699,26 @@ class CTkFileDialog(ctk.CTkToplevel):
         self.destroy()
 
     @staticmethod
-    def ask_save_filename(parent, initial_dir=None, initial_file="",
-                           filetypes=(("Alle Dateien", "*"),)):
-        dlg = CTkFileDialog(parent, mode="save", title="Speichern unter",
-                             initial_dir=initial_dir, initial_file=initial_file,
-                             filetypes=filetypes)
+    def ask_save_filename(parent, initial_dir=None, initial_file="", filetypes=None):
+        dlg = CTkFileDialog(
+            parent, mode="save", title=tr("file_dialog.save_as"),
+            initial_dir=initial_dir, initial_file=initial_file,
+            filetypes=filetypes or ((tr("file_dialog.all_files"), "*"),))
         parent.wait_window(dlg)
         return dlg.result_path
 
     @staticmethod
-    def ask_open_filename(parent, initial_dir=None, filetypes=(("Alle Dateien", "*"),)):
-        dlg = CTkFileDialog(parent, mode="open", title="Datei öffnen",
-                             initial_dir=initial_dir, filetypes=filetypes)
+    def ask_open_filename(parent, initial_dir=None, filetypes=None):
+        dlg = CTkFileDialog(
+            parent, mode="open", title=tr("file_dialog.open_file"),
+            initial_dir=initial_dir,
+            filetypes=filetypes or ((tr("file_dialog.all_files"), "*"),))
         parent.wait_window(dlg)
         return dlg.result_path
 
 
 class CTkMsg:
-    """Konsistent gestylter Ersatz für tkinter.messagebox (gleicher Look wie
-    der Rest der App), mit derselben Aufruf-Signatur wie messagebox
-    (showerror/showwarning/showinfo/askyesno), damit bestehende Aufrufstellen
-    unverändert bleiben können."""
+    """AuraPi-styled, locale-aware message dialogs."""
 
     _KIND_STYLE = {
         "info": ("ℹ", "#5b9bd5"),
@@ -2541,7 +2728,8 @@ class CTkMsg:
     }
 
     @staticmethod
-    def _show(title, message, kind="info", buttons=("OK",)):
+    def _show(title, message, kind="info", buttons=None):
+        buttons = buttons or (tr("common.ok"),)
         parent = tk._default_root
         top = ctk.CTkToplevel(parent)
         top.title("")
@@ -2564,17 +2752,15 @@ class CTkMsg:
         btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
         btn_frame.pack(fill="x")
 
-        def make_click(b):
-            def _c():
-                result["value"] = b
+        def make_click(button):
+            def _click():
+                result["value"] = button
                 top.destroy()
-            return _c
+            return _click
 
-        for b in reversed(buttons):
-            danger = kind in ("warning", "error") and b in ("Ja", "OK") and len(buttons) > 1
-            kwargs = {"fg_color": "#B71C1C", "hover_color": "#8E0000"} if danger else {}
-            ctk.CTkButton(btn_frame, text=b, width=100, corner_radius=10,
-                          command=make_click(b), **kwargs).pack(side="right", padx=(8, 0))
+        for button in reversed(buttons):
+            ctk.CTkButton(btn_frame, text=button, width=100, corner_radius=10,
+                          command=make_click(button)).pack(side="right", padx=(8, 0))
 
         top.protocol("WM_DELETE_WINDOW", make_click(buttons[-1]))
         top.update_idletasks()
@@ -2590,26 +2776,24 @@ class CTkMsg:
 
     @staticmethod
     def showerror(title, message):
-        CTkMsg._show(title, message, kind="error", buttons=("OK",))
+        CTkMsg._show(title, message, kind="error", buttons=(tr("common.ok"),))
 
     @staticmethod
     def showwarning(title, message):
-        CTkMsg._show(title, message, kind="warning", buttons=("OK",))
+        CTkMsg._show(title, message, kind="warning", buttons=(tr("common.ok"),))
 
     @staticmethod
     def showinfo(title, message):
-        CTkMsg._show(title, message, kind="info", buttons=("OK",))
+        CTkMsg._show(title, message, kind="info", buttons=(tr("common.ok"),))
 
     @staticmethod
     def askyesno(title, message, icon=None):
-        result = CTkMsg._show(title, message, kind="question", buttons=("Nein", "Ja"))
-        return result == "Ja"
+        no_label, yes_label = tr("common.no"), tr("common.yes")
+        result = CTkMsg._show(title, message, kind="question", buttons=(no_label, yes_label))
+        return result == yes_label
 
     @staticmethod
     def show_success(message):
-        """Vereinfachtes Erfolgs-Popup: leere Titelleiste, keine Kopfzeile
-        und keine Subline (die die Aussage sonst dreifach wiederholen würden)
-        - nur eine einzige blaue Zeile mit der Erfolgsmeldung."""
         parent = tk._default_root
         top = ctk.CTkToplevel(parent)
         top.title("")
@@ -2620,21 +2804,17 @@ class CTkMsg:
 
         frame = ctk.CTkFrame(top, corner_radius=0, fg_color="transparent")
         frame.pack(fill="both", expand=True, padx=28, pady=22)
-
         ctk.CTkLabel(frame, text=message, font=ctk.CTkFont(size=14, weight="bold"),
                      text_color="#5b9bd5", justify="left", wraplength=380).pack(anchor="w")
 
-        result = {"value": "OK"}
         btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(18, 0))
 
         def _close():
-            result["value"] = "OK"
             top.destroy()
 
-        ctk.CTkButton(btn_frame, text="OK", width=100, corner_radius=10,
+        ctk.CTkButton(btn_frame, text=tr("common.ok"), width=100, corner_radius=10,
                       command=_close).pack(side="right")
-
         top.protocol("WM_DELETE_WINDOW", _close)
         top.update_idletasks()
         try:
@@ -2645,29 +2825,29 @@ class CTkMsg:
         except Exception:
             pass
         top.wait_window()
-        return result["value"]
 
 
 class ToolTip:
-    """Einfacher Hover-Tooltip für beliebige Tk-/CTk-Widgets, da
-    CustomTkinter 6.0.0 keinen eingebauten Tooltip mitbringt."""
+    """Hover tooltip that resolves its locale key when shown."""
 
-    def __init__(self, widget, text):
+    def __init__(self, widget, text_or_key, translate=True):
         self.widget = widget
-        self.text = text
+        self.text_or_key = text_or_key
+        self.translate = translate
         self.tip = None
         widget.bind("<Enter>", self._show)
         widget.bind("<Leave>", self._hide)
 
     def _show(self, event=None):
-        if self.tip or not self.text:
+        text = tr(self.text_or_key) if self.translate else self.text_or_key
+        if self.tip or not text:
             return
         x = self.widget.winfo_rootx() + 16
         y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
         self.tip = tk.Toplevel(self.widget)
         self.tip.wm_overrideredirect(True)
         self.tip.wm_geometry(f"+{x}+{y}")
-        tk.Label(self.tip, text=self.text, justify="left",
+        tk.Label(self.tip, text=text, justify="left",
                  background="#2b2b2b", foreground="#f0f0f0",
                  relief="solid", borderwidth=1, wraplength=380,
                  padx=8, pady=6).pack()
@@ -2687,18 +2867,14 @@ class AuraPiApp(ctk.CTk):
         self.log_queue = queue.Queue()
         self.worker_thread = None
         self.devices = []
-        # Wird von start_backup() vor jedem Lauf zurückgesetzt (.clear()) und
-        # von _cancel_backup() gesetzt - backup_device_to_file/gzip_compress_file/
-        # run_pkexec prüfen dieses Event bereits selbst und räumen unfertige
-        # Dateien automatisch auf (siehe OperationCancelled-Handling).
+        self.devices_restore = []
         self._cancel_event = threading.Event()
+        self._cancel_requested = False
+        self._busy = False
+        self._busy_kind = None
+        self._locale_bindings = []
+        self._status_is_ready = True
 
-        # Scrollbarer Wurzel-Container: sobald der Inhalt bei kleineren
-        # Auflösungen/Skalierungsfaktoren (z.B. 125% auf einem entfernt
-        # bedienten TV) nicht mehr komplett in die Fensterhöhe passt,
-        # erscheint eine dezente, dünne Scrollbar statt dass unten etwas
-        # abgeschnitten wird. Passt sie nicht in die Fensterhöhe, bleibt sie
-        # unsichtbar - kein optischer Unterschied im Normalfall.
         self._scroll_root = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self._scroll_root.pack(fill="both", expand=True)
 
@@ -2706,28 +2882,19 @@ class AuraPiApp(ctk.CTk):
 
         self.tabview = ctk.CTkTabview(self._scroll_root, corner_radius=14)
         self.tabview.pack(fill="x", padx=16, pady=(16, 8))
-        self.backup_tab = self.tabview.add("Backup erstellen")
-        self.restore_tab = self.tabview.add("Image zurückspielen")
+        self._tab_backup_name = tr("tabs.backup")
+        self._tab_restore_name = tr("tabs.restore")
+        self.backup_tab = self.tabview.add(self._tab_backup_name)
+        self.restore_tab = self.tabview.add(self._tab_restore_name)
 
         self._build_backup_tab()
         self._build_restore_tab()
         self._build_log_area()
 
-        # Responsives Verhalten bei Fenster-Verkleinerung: Icon schrumpft
-        # (bis max. 50%), Abstände zwischen den Abschnitten ziehen sich enger
-        # zusammen - ohne dass sich etwas überlagert.
         self._is_compact_mode = None
         self._icon_last_container_size = None
         self._responsive_after_id = None
 
-        # Fenstergröße erst JETZT setzen (nachdem der komplette Inhalt gebaut
-        # ist, mit standardmäßig zugeklappter CLI). winfo_reqheight() auf dem
-        # Toplevel selbst ist bei einem CTkScrollableFrame NICHT verlässlich
-        # (der scrollbare Innenbereich kann beliebig größer sein als die
-        # Canvas-Anfrage) - stattdessen wird die tatsächliche Inhaltshöhe
-        # direkt aus der Canvas-Bounding-Box gelesen. So bleibt das Fenster
-        # automatisch kompakt, auch wenn sich der Inhalt später mal ändert
-        # (z.B. PiShrink-Zeile ein/aus).
         self.update_idletasks()
         win_w = max(860, self.winfo_reqwidth())
         screen_w = self.winfo_screenwidth()
@@ -2744,6 +2911,137 @@ class AuraPiApp(ctk.CTk):
         self.bind("<Configure>", self._on_root_configure)
         self.after(200, self._poll_log_queue)
         self.refresh_devices()
+
+    def _localize_widget(self, widget, key, **fmt):
+        self._locale_bindings.append((widget, key, fmt))
+        widget.configure(text=tr(key, **fmt))
+        return widget
+
+    @staticmethod
+    def _format_device_display(device_info):
+        transport = (device_info.get("transport") or "").upper()
+        label = device_info.get("model") or transport or tr("devices.removable")
+        if device_info.get("unstable"):
+            return (f"⚠ {device_info['raw_device']}  —  "
+                    f"{human_size(device_info['size_bytes'])}  —  {label}"
+                    f"  ({tr('devices.unstable_tag')})")
+        return (f"{device_info['raw_device']}  —  {human_size(device_info['size_bytes'])}  —  "
+                f"{label}  (S/N {device_info['serial']})")
+
+    def _refresh_device_menu_texts(self):
+        if not hasattr(self, "src_menu") or not hasattr(self, "dst_menu"):
+            return
+        old_src = self.src_menu.get()
+        old_dst = self.dst_menu.get()
+        src_device = next((d.get("device") for d in self.devices if d.get("display") == old_src), None)
+        dst_device = next((d.get("device") for d in self.devices_restore if d.get("display") == old_dst), None)
+
+        for device_info in self.devices:
+            device_info["display"] = self._format_device_display(device_info)
+        for device_info in self.devices_restore:
+            device_info["display"] = self._format_device_display(device_info)
+
+        src_values = [d["display"] for d in self.devices] or [tr("devices.none")]
+        dst_values = [d["display"] for d in self.devices_restore] or [tr("devices.none")]
+        self.src_menu.configure(values=src_values)
+        self.dst_menu.configure(values=dst_values)
+
+        def display_for(devices, device_id, fallback):
+            return next((d["display"] for d in devices if d.get("device") == device_id), fallback)
+
+        self.src_menu.set(display_for(self.devices, src_device, src_values[0]))
+        self.dst_menu.set(display_for(self.devices_restore, dst_device, dst_values[0]))
+
+    def _operation_name(self, kind):
+        key = str(kind).lower()
+        if key in ("backup", "restore"):
+            return tr(f"operations.{key}")
+        return str(kind)
+
+    def _device_detail(self, dev_info):
+        return "\n".join([
+            tr("backup.details.model", value=dev_info.get("model") or "?"),
+            tr("backup.details.serial", value=dev_info.get("serial") or "?"),
+            tr("backup.details.size", value=human_size(dev_info.get("size_bytes") or 0)),
+            tr("backup.details.device", value=dev_info.get("raw_device") or "?"),
+        ])
+
+    def _on_language_change(self, label):
+        code = self._language_label_to_code.get(label)
+        if not code or code == I18N.language:
+            return
+        I18N.set_language(code)
+        self._update_ui_language()
+
+    def _update_ui_language(self):
+        old_backup = self._tab_backup_name
+        old_restore = self._tab_restore_name
+        new_backup = tr("tabs.backup")
+        new_restore = tr("tabs.restore")
+        selected = self.tabview.get()
+
+        if old_backup != new_backup:
+            self.tabview.rename(old_backup, new_backup)
+        if old_restore != new_restore:
+            self.tabview.rename(old_restore, new_restore)
+        self._tab_backup_name = new_backup
+        self._tab_restore_name = new_restore
+
+        if selected == old_backup:
+            self.tabview.set(new_backup)
+        elif selected == old_restore:
+            self.tabview.set(new_restore)
+
+        for widget, key, fmt in list(self._locale_bindings):
+            try:
+                if widget.winfo_exists():
+                    widget.configure(text=tr(key, **fmt))
+            except Exception:
+                pass
+
+        self._refresh_device_menu_texts()
+        self._check_pishrink()
+        self._refresh_busy_ui_texts()
+        if self._status_is_ready and hasattr(self, "status_var"):
+            self.status_var.set(tr("common.ready"))
+        if hasattr(self, "language_menu"):
+            self.language_menu.set(
+                self._language_code_to_label.get(I18N.language, I18N.language.upper()))
+        self.update_idletasks()
+        self._update_scrollbar_visibility()
+
+    def _refresh_busy_ui_texts(self):
+        if not hasattr(self, "backup_start_btn") or not hasattr(self, "restore_start_btn"):
+            return
+        if self._busy:
+            if self._busy_kind == "backup":
+                if self._cancel_requested:
+                    self.backup_start_btn.configure(state="disabled", text=tr("backup.cancelling"),
+                                                    fg_color="#B71C1C", hover_color="#8f1616")
+                else:
+                    self.backup_start_btn.configure(state="normal", text=tr("backup.cancel"),
+                                                    fg_color="#B71C1C", hover_color="#8f1616",
+                                                    command=self._cancel_backup)
+                self.restore_start_btn.configure(state="disabled", text=tr("runtime.please_wait"),
+                                                  fg_color="gray30")
+            elif self._busy_kind == "restore":
+                self.restore_start_btn.configure(state="disabled", text=tr("restore.running"),
+                                                  fg_color="gray30")
+                self.backup_start_btn.configure(state="disabled", text=tr("runtime.please_wait"),
+                                                 fg_color="gray30")
+            else:
+                self.backup_start_btn.configure(state="disabled", text=tr("runtime.please_wait"),
+                                                 fg_color="gray30")
+                self.restore_start_btn.configure(state="disabled", text=tr("runtime.please_wait"),
+                                                  fg_color="gray30")
+        else:
+            self.backup_start_btn.configure(state="normal", text=tr("backup.start"),
+                                             fg_color=self._default_btn_color,
+                                             hover_color=self._default_btn_hover_color,
+                                             command=self.start_backup)
+            self.restore_start_btn.configure(state="normal", text=tr("restore.start"),
+                                              fg_color="#B71C1C", hover_color="#8E0000",
+                                              command=self.start_restore)
 
     def _on_root_configure(self, event):
         # Nur auf Größenänderungen des Hauptfensters selbst reagieren, nicht
@@ -2831,149 +3129,157 @@ class AuraPiApp(ctk.CTk):
     # ---------------- Header (Wortmarke) ----------------
 
     def _build_header(self):
-        """Titelbereich mit der AuraPi-Wortmarke, im dunklen Navy-Ton der
-        App (identisch zum Fensterhintergrund, siehe aurapi_navy_theme.json)."""
         header = ctk.CTkFrame(self._scroll_root, corner_radius=0,
-                               fg_color=("#c9d4e8", "#1a1a2e"))
+                              fg_color=("#c9d4e8", "#1a1a2e"))
         header.pack(fill="x", side="top")
 
         try:
             wm_img = _decode_embedded_image(_WORDMARK_PNG_B64)
-            disp_w = 148  # Breite der Wortmarke im Header
+            disp_w = 148
             disp_h = int(disp_w * wm_img.height / wm_img.width)
-            self._wordmark_ctkimg = ctk.CTkImage(light_image=wm_img, dark_image=wm_img,
-                                                  size=(disp_w, disp_h))
+            self._wordmark_ctkimg = ctk.CTkImage(
+                light_image=wm_img, dark_image=wm_img, size=(disp_w, disp_h))
             ctk.CTkLabel(header, image=self._wordmark_ctkimg, text="").pack(pady=(4, 3))
         except Exception as e:
-            # Fallback, z.B. wenn PIL.ImageTk auf diesem System nicht
-            # funktioniert (Pillow ohne passende Tcl/Tk-Anbindung installiert
-            # - siehe README/Installationshinweise). App bleibt so nutzbar,
-            # nur ohne Grafik-Wortmarke.
-            print(f"[AuraPi] Konnte Wortmarke nicht als Bild laden ({e}). "
-                  f"Zeige Text-Fallback. Siehe Installationshinweise zu "
-                  f"PIL.ImageTk.")
+            print(f"[AuraPi] Could not load wordmark image ({e}); using text fallback.")
             ctk.CTkLabel(header, text="AuraPi",
                          font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(4, 3))
 
-    # ---------------- Backup Tab ----------------
+        choices = I18N.language_choices()
+        labels = [label for label, _code in choices]
+        self._language_label_to_code = {label: code for label, code in choices}
+        self._language_code_to_label = {code: label for label, code in choices}
+        current_label = self._language_code_to_label.get(I18N.language, I18N.language.upper())
+        self.language_menu = ctk.CTkOptionMenu(
+            header, values=labels or ["EN"], width=72, height=28,
+            corner_radius=9, command=self._on_language_change)
+        self.language_menu.set(current_label)
+        self.language_menu.place(relx=1.0, rely=0.5, x=-16, anchor="e")
 
     def _build_backup_tab(self):
         f = self.backup_tab
         f.grid_columnconfigure(1, weight=1)
         pad = {"padx": 14, "pady": 8}
 
-        self._quelle_label = ctk.CTkLabel(f, text="Quelle (SD-Karte / USB-Laufwerk)",
-                     font=ctk.CTkFont(weight="bold"))
+        self._quelle_label = self._localize_widget(
+            ctk.CTkLabel(f, text="", font=ctk.CTkFont(weight="bold")),
+            "backup.source_label")
         self._quelle_label.grid(row=0, column=0, sticky="w", **pad)
-        self.src_menu = ctk.CTkComboBox(f, values=["Keine Geräte gefunden"], width=380,
-                                         corner_radius=10, state="readonly",
-                                         fg_color="#191a2e", border_color="#3a7ebf",
-                                         border_width=2, text_color="white",
-                                         button_color="#3a7ebf", button_hover_color="#2d6294",
-                                         dropdown_fg_color="#22223c", dropdown_text_color="white",
-                                         dropdown_hover_color="#2a2a44")
+        self.src_menu = ctk.CTkComboBox(
+            f, values=[tr("devices.none")], width=380, corner_radius=10, state="readonly",
+            fg_color="#191a2e", border_color="#3a7ebf", border_width=2, text_color="white",
+            button_color="#3a7ebf", button_hover_color="#2d6294",
+            dropdown_fg_color="#22223c", dropdown_text_color="white",
+            dropdown_hover_color="#2a2a44")
         self.src_menu.grid(row=1, column=0, columnspan=2, sticky="we", padx=14)
-        ctk.CTkButton(f, text="Aktualisieren", width=140, corner_radius=10,
-                      command=self.refresh_devices).grid(row=1, column=2, padx=14)
+        self._backup_refresh_btn = self._localize_widget(
+            ctk.CTkButton(f, text="", width=140, corner_radius=10, command=self.refresh_devices),
+            "common.refresh")
+        self._backup_refresh_btn.grid(row=1, column=2, padx=14)
 
-        ctk.CTkLabel(f, text="Nur Geräte mit Seriennummer und stabiler by-id-Kennung werden angezeigt.",
-                     text_color="gray60", font=ctk.CTkFont(size=11)).grid(
-            row=2, column=0, columnspan=3, sticky="w", padx=14, pady=(2, 10))
+        row2_frame = ctk.CTkFrame(f, fg_color="transparent")
+        row2_frame.grid(row=2, column=0, columnspan=3, sticky="we", padx=14, pady=(2, 10))
 
-        self._zieldatei_label = ctk.CTkLabel(f, text="Zieldatei", font=ctk.CTkFont(weight="bold"))
+        self._device_note_label = self._localize_widget(
+            ctk.CTkLabel(row2_frame, text="", text_color="gray60", font=ctk.CTkFont(size=11)),
+            "devices.note")
+        self._device_note_label.pack(side="left")
+
+        # Transparenzfilter: zeigt auf Wunsch auch Geräte ohne Seriennummer/
+        # by-id-Pfad (z.B. exotische USB-Adapter). Bewusst nur für die
+        # Backup-Quelle, nicht für das Restore-Ziel (siehe refresh_devices).
+        # Bleibt ausdrücklich opt-in - Standardverhalten bleibt fail-closed.
+        self.show_unstable_var = tk.BooleanVar(value=False)
+        show_unstable_cb = ctk.CTkCheckBox(row2_frame, text="",
+                                            variable=self.show_unstable_var,
+                                            width=20, command=self.refresh_devices)
+        show_unstable_cb.pack(side="left", padx=(22, 6))
+        ToolTip(show_unstable_cb, "devices.show_more_tooltip")
+
+        self._show_unstable_label = self._localize_widget(
+            ctk.CTkLabel(row2_frame, text="", text_color="gray60", font=ctk.CTkFont(size=11)),
+            "devices.show_more")
+        self._show_unstable_label.pack(side="left")
+        ToolTip(self._show_unstable_label, "devices.show_more_tooltip")
+
+        self._zieldatei_label = self._localize_widget(
+            ctk.CTkLabel(f, text="", font=ctk.CTkFont(weight="bold")),
+            "backup.target_file_label")
         self._zieldatei_label.grid(row=3, column=0, sticky="w", **pad)
         self.dest_entry = ctk.CTkEntry(f, corner_radius=10, fg_color="#191a2e",
-                                        border_color="#3a7ebf", border_width=2)
+                                       border_color="#3a7ebf", border_width=2)
         self.dest_entry.insert(0, os.path.expanduser("~/sdcard-backup.img.gz"))
         self.dest_entry.grid(row=4, column=0, columnspan=2, sticky="we", padx=14)
-        ctk.CTkButton(f, text="Durchsuchen…", width=140, corner_radius=10,
-                      command=self._choose_dest).grid(row=4, column=2, padx=14)
+        self._backup_browse_btn = self._localize_widget(
+            ctk.CTkButton(f, text="", width=140, corner_radius=10, command=self._choose_dest),
+            "common.browse")
+        self._backup_browse_btn.grid(row=4, column=2, padx=14)
 
         modes = ctk.CTkFrame(f, corner_radius=14)
         self._modes_frame = modes
         modes.grid(row=5, column=0, columnspan=3, sticky="we", padx=14, pady=(16, 6))
-        ctk.CTkLabel(modes, text="Art des Backups", font=ctk.CTkFont(weight="bold")).pack(
-            anchor="w", padx=14, pady=(10, 4))
+        self._backup_mode_title = self._localize_widget(
+            ctk.CTkLabel(modes, text="", font=ctk.CTkFont(weight="bold")),
+            "backup.mode_title")
+        self._backup_mode_title.pack(anchor="w", padx=14, pady=(10, 4))
 
         modes_row = ctk.CTkFrame(modes, fg_color="transparent")
         modes_row.pack(anchor="w", fill="x", padx=18, pady=(0, 12))
-
         self.backup_mode = tk.StringVar(value="rpi")
-        rb_rpi = ctk.CTkRadioButton(modes_row, text="Raspberry Pi OS",
-                                     variable=self.backup_mode, value="rpi")
-        rb_rpi.pack(side="left", padx=(0, 32), pady=6)
-        ToolTip(rb_rpi, "Maximal verkleinert über PiShrink. Nur für Layouts mit "
-                        "FAT-Boot-Partition und ext4-Root-Partition geeignet "
-                        "(Standard bei Raspberry Pi OS) — bricht bei anderen "
-                        "Layouts kontrolliert mit Fehlermeldung ab.")
-
-        rb_other = ctk.CTkRadioButton(modes_row, text="Other OS",
-                                       variable=self.backup_mode, value="other")
-        rb_other.pack(side="left", padx=(0, 32), pady=6)
-        ToolTip(rb_other, "Kopiert alle Partitionen unverändert bis zum Ende der "
-                          "letzten Partition. Dateisystemunabhängig, aber nicht "
-                          "für jedes Boot-/Partitionierungslayout geeignet — "
-                          "bei GPT-Datenträgern nicht verfügbar (Backup-GPT am "
-                          "Geräteende würde sonst fehlen).")
-
-        rb_full = ctk.CTkRadioButton(modes_row, text="Vollständiges Abbild",
-                                      variable=self.backup_mode, value="full")
-        rb_full.pack(side="left", pady=6)
-        ToolTip(rb_full, "Kopiert die komplette Karte 1:1, inklusive ungenutztem "
-                         "Speicher. Funktioniert garantiert mit jedem Layout — "
-                         "auch GPT, UBI/UBIFS oder speziellen Bootloadern. "
-                         "Größte Datei, aber die sicherste Wahl bei unbekanntem "
-                         "oder exotischem System.")
+        self.rb_rpi = self._localize_widget(
+            ctk.CTkRadioButton(modes_row, text="", variable=self.backup_mode, value="rpi"),
+            "backup.modes.rpi")
+        self.rb_rpi.pack(side="left", padx=(0, 32), pady=6)
+        ToolTip(self.rb_rpi, "backup.tooltips.rpi")
+        self.rb_other = self._localize_widget(
+            ctk.CTkRadioButton(modes_row, text="", variable=self.backup_mode, value="other"),
+            "backup.modes.other")
+        self.rb_other.pack(side="left", padx=(0, 32), pady=6)
+        ToolTip(self.rb_other, "backup.tooltips.other")
+        self.rb_full = self._localize_widget(
+            ctk.CTkRadioButton(modes_row, text="", variable=self.backup_mode, value="full"),
+            "backup.modes.full")
+        self.rb_full.pack(side="left", pady=6)
+        ToolTip(self.rb_full, "backup.tooltips.full")
 
         self._pishrink_status_row = ctk.CTkFrame(f, fg_color="transparent")
         status_row = self._pishrink_status_row
         status_row.grid(row=6, column=0, columnspan=3, sticky="we", padx=14, pady=(4, 0))
         status_row.grid_columnconfigure(0, weight=1)
         self.pishrink_status = ctk.CTkLabel(status_row, text="", anchor="w",
-                                             font=ctk.CTkFont(size=12))
+                                            font=ctk.CTkFont(size=12))
         self.pishrink_status.grid(row=0, column=0, sticky="we")
-        ctk.CTkButton(status_row, text="Erneut prüfen", width=140, corner_radius=10,
-                      command=self._check_pishrink).grid(row=0, column=1, padx=(10, 0))
-        self._pishrink_note_label = ctk.CTkLabel(
-            f, text="(nur für Modus \"Raspberry Pi OS\" nötig)",
-            text_color="gray60", font=ctk.CTkFont(size=11))
-        self._pishrink_note_label.grid(
-            row=7, column=0, columnspan=3, sticky="w", padx=14, pady=(0, 4))
+        self._pishrink_retry_btn = self._localize_widget(
+            ctk.CTkButton(status_row, text="", width=140, corner_radius=10,
+                          command=self._check_pishrink), "common.retry")
+        self._pishrink_retry_btn.grid(row=0, column=1, padx=(10, 0))
+        self._pishrink_note_label = self._localize_widget(
+            ctk.CTkLabel(f, text="", text_color="gray60", font=ctk.CTkFont(size=11)),
+            "backup.pishrink_note")
+        self._pishrink_note_label.grid(row=7, column=0, columnspan=3, sticky="w",
+                                       padx=14, pady=(0, 4))
 
         action_frame = ctk.CTkFrame(f, fg_color="transparent")
         self._action_frame = action_frame
-        # Fester linker Abstand (statt zentriert) - garantiert, dass Icon +
-        # Button auf Backup- und Restore-Tab exakt an derselben X-Position
-        # stehen, auch wenn beide Tab-Frames intern leicht unterschiedliche
-        # Spaltenbreiten hätten. _ACTION_FRAME_LEFT_PADX ist die gemeinsame
-        # Referenz für beide Tabs (siehe _build_restore_tab).
         action_frame.grid(row=8, column=0, columnspan=3, sticky="w",
-                           padx=(_ACTION_FRAME_LEFT_PADX, 0), pady=(18, 10))
-
-        # Icon-Container: zeigt aktuell nur das unanimierte Still-SVG/PNG.
-        # Technisch bereits so angelegt, dass später eine animierte Lotus-
-        # Sequenz (GIF oder animiertes SVG, läuft während des Backups) in
-        # denselben Container eingesetzt werden kann — siehe set_icon_still()
-        # und set_icon_animated_gif() weiter unten.
+                          padx=(_ACTION_FRAME_LEFT_PADX, 0), pady=(18, 10))
         self.icon_container = ctk.CTkFrame(action_frame, width=230, height=230,
-                                            corner_radius=24,
-                                            fg_color=("#c9d4e8", "#1a1a2e"))
+                                           corner_radius=24,
+                                           fg_color=("#c9d4e8", "#1a1a2e"))
         self.icon_container.pack(side="left", padx=(0, 28))
         self.icon_container.pack_propagate(False)
-
         self.icon_label = ctk.CTkLabel(self.icon_container, text="", image=None)
         self.icon_label.pack(expand=True)
         self._icon_still_ctkimg = None
         self._icon_anim_job = None
         self.set_icon_still()
 
-        self.backup_start_btn = ctk.CTkButton(action_frame, text="Backup starten", height=40,
-                      width=180, corner_radius=12, font=ctk.CTkFont(weight="bold"),
-                      command=self.start_backup)
+        self.backup_start_btn = ctk.CTkButton(
+            action_frame, text=tr("backup.start"), height=40, width=180,
+            corner_radius=12, font=ctk.CTkFont(weight="bold"), command=self.start_backup)
         self.backup_start_btn.pack(side="left")
         self._default_btn_color = self.backup_start_btn.cget("fg_color")
         self._default_btn_hover_color = self.backup_start_btn.cget("hover_color")
-
         self._check_pishrink()
 
     def set_icon_still(self, size=None):
@@ -2998,9 +3304,8 @@ class AuraPiApp(ctk.CTk):
             if restore_label is not None:
                 restore_label.configure(image=self._icon_still_ctkimg)
         except Exception as e:
-            print(f"[AuraPi] Konnte Icon nicht als Bild laden ({e}). "
-                  f"Zeige Text-Fallback. Siehe Installationshinweise zu "
-                  f"PIL.ImageTk.")
+            print(f"[AuraPi] Could not load the icon image ({e}); using the text fallback. "
+                  f"See the installation notes for PIL.ImageTk.")
             self.icon_label.configure(image=None, text="AuraPi")
             restore_label = getattr(self, "icon_label_restore", None)
             if restore_label is not None:
@@ -3062,113 +3367,96 @@ class AuraPiApp(ctk.CTk):
                                           self._advance_icon_animation)
 
     def _check_pishrink(self):
-        """Prüft PiShrink automatisch (u.a. beim Programmstart). Die
-        Status-/Erneut-prüfen-Zeile ist nur sichtbar, wenn PiShrink NICHT
-        verifiziert werden konnte - im Normalfall (einmal korrekt installiert)
-        bleibt sie unauffällig ausgeblendet, um die Oberfläche im täglichen
-        Gebrauch nicht mit einer Prüfung zu überladen, die dann ohnehin nie
-        fehlschlägt. Die eigentliche sicherheitsrelevante Prüfung bleibt
-        davon unberührt: start_backup() verifiziert im Modus 'Raspberry Pi OS'
-        vor jedem Lauf ohnehin erneut, unabhängig vom UI-Zustand hier."""
         ok, info = verify_pishrink()
         if ok:
-            self.pishrink_status.configure(
-                text=f"✓ PiShrink verifiziert (Hash & Root-Besitz OK): {info}",
-                text_color="#4CAF50")
+            self.pishrink_status.configure(text=tr("pishrink.verified", info=info),
+                                           text_color="#4CAF50")
             self._pishrink_status_row.grid_remove()
             self._pishrink_note_label.grid_remove()
         else:
-            self.pishrink_status.configure(
-                text=f"✗ PiShrink nicht verifiziert ({info}) — siehe Installationsanleitung.",
-                text_color="#EF5350")
+            self.pishrink_status.configure(text=tr("pishrink.not_verified", info=info),
+                                           text_color="#EF5350")
             self._pishrink_status_row.grid()
             self._pishrink_note_label.grid()
 
     def _choose_dest(self):
         ext = ".img" if self.backup_mode.get() == "full" else ".img.gz"
         path = CTkFileDialog.ask_save_filename(
-            self, initial_dir=os.path.dirname(self.dest_entry.get()) or os.path.expanduser("~"),
+            self,
+            initial_dir=os.path.dirname(self.dest_entry.get()) or os.path.expanduser("~"),
             initial_file="sdcard-backup" + ext,
-            filetypes=[("Image-Dateien", "*.img *.img.gz"), ("Alle Dateien", "*")])
+            filetypes=[(tr("file_dialog.image_files"), "*.img *.img.gz"),
+                       (tr("file_dialog.all_files"), "*")])
         if path:
             self.dest_entry.delete(0, tk.END)
             self.dest_entry.insert(0, path)
 
     def start_backup(self):
         if self.worker_thread and self.worker_thread.is_alive():
-            CTkMsg.showwarning("Bitte warten", "Es läuft bereits ein Vorgang.")
+            CTkMsg.showwarning(tr("backup.errors.active_title"), tr("backup.errors.active_message"))
             return
         idx = self._selected_index(self.src_menu, self.devices)
         if idx is None:
-            CTkMsg.showerror("Keine Quelle", "Bitte zuerst ein Quell-Laufwerk auswählen.")
+            CTkMsg.showerror(tr("backup.errors.no_source_title"), tr("backup.errors.no_source_message"))
             return
         dev_info = dict(self.devices[idx])
         dest = self.dest_entry.get().strip()
         if not dest:
-            CTkMsg.showerror("Kein Ziel", "Bitte einen Zieldateinamen angeben.")
+            CTkMsg.showerror(tr("backup.errors.no_target_title"), tr("backup.errors.no_target_message"))
             return
         if dest.startswith("/dev/"):
-            CTkMsg.showerror("Ungültiges Ziel", "Das Ziel darf kein Gerätepfad (/dev/...) sein.")
+            CTkMsg.showerror(tr("backup.errors.invalid_target_title"), tr("backup.errors.device_path_target"))
             return
         dest_abs = os.path.abspath(dest)
         if os.path.islink(dest_abs):
-            CTkMsg.showerror("Ungültiges Ziel", "Zielpfad ist ein Symlink — abgelehnt.")
+            CTkMsg.showerror(tr("backup.errors.invalid_target_title"), tr("backup.errors.symlink_target"))
             return
 
         mode = self.backup_mode.get()
         if mode in ("rpi", "other") and not dest_abs.endswith(".img.gz"):
-            CTkMsg.showerror(
-                "Falsche Dateiendung",
-                "Die Modi 'Raspberry Pi OS' und 'Other OS' erzeugen komprimierte "
-                "Dateien und benötigen die Endung .img.gz.")
+            CTkMsg.showerror(tr("backup.errors.wrong_extension_title"),
+                             tr("backup.errors.compressed_extension"))
             return
         if mode == "full" and dest_abs.endswith(".gz"):
-            CTkMsg.showerror(
-                "Falsche Dateiendung",
-                "Der Modus 'Vollständiges Abbild' erzeugt keine komprimierte "
-                "Datei. Bitte eine Endung ohne .gz verwenden (z. B. .img).")
+            CTkMsg.showerror(tr("backup.errors.wrong_extension_title"),
+                             tr("backup.errors.full_extension"))
             return
 
         overwrite = False
         if os.path.exists(dest_abs):
-            overwrite = CTkMsg.askyesno("Datei existiert bereits",
-                                             f"{dest_abs} existiert bereits. Überschreiben?")
+            overwrite = CTkMsg.askyesno(
+                tr("backup.errors.file_exists_title"),
+                tr("backup.errors.file_exists_message", path=dest_abs))
             if not overwrite:
                 return
 
         if mode == "rpi":
             ok, info = verify_pishrink()
             if not ok:
-                CTkMsg.showerror("PiShrink nicht verifiziert", f"{info}\n\n{PISHRINK_INSTALL_HINT}")
+                CTkMsg.showerror(tr("backup.errors.pishrink_title"),
+                                 f"{info}\n\n{pishrink_install_hint()}")
                 return
 
-        mode_label = {"rpi": "Raspberry Pi OS", "other": "Other OS", "full": "Vollständiges Abbild"}[mode]
-        detail = (f"Modell: {dev_info['model'] or '?'}\n"
-                  f"Seriennummer: {dev_info['serial']}\n"
-                  f"Größe: {human_size(dev_info['size_bytes'])}\n"
-                  f"Gerät: {dev_info['raw_device']}")
-        if not CTkMsg.askyesno(
-                "Backup bestätigen",
-                f"Quelle:\n{detail}\n\n"
-                f"Ziel: {dest_abs}\n\n"
-                f"Modus: {mode_label}\n\n"
-                "Fortfahren?"):
+        detail = self._device_detail(dev_info)
+        mode_label = tr(f"backup.modes.{mode}")
+        message = "\n\n".join([
+            tr("backup.confirm_source", detail=detail),
+            tr("backup.confirm_target", target=dest_abs),
+            tr("backup.confirm_mode", mode=mode_label),
+            tr("common.continue")])
+        if not CTkMsg.askyesno(tr("backup.confirm_title"), message):
             return
 
         self._cancel_event.clear()
+        self._cancel_requested = False
         self._set_busy(True, kind="backup")
-        self.worker_thread = threading.Thread(target=self._backup_worker,
-                                               args=(dev_info, dest_abs, mode, overwrite), daemon=True)
+        self.worker_thread = threading.Thread(
+            target=self._backup_worker,
+            args=(dev_info, dest_abs, mode, overwrite), daemon=True)
         self.worker_thread.start()
 
     def _backup_worker(self, dev_info, dest, mode, overwrite):
-        """Dünner, abgesicherter Wrapper: fängt jede unerwartete Ausnahme im
-        Hintergrundthread ab, damit die GUI nie dauerhaft auf 'läuft' hängen
-        bleibt, ohne dass der Nutzer einen Fehler sieht. Baut außerdem
-        EINMALIG die sudo-Sitzung auf und hält sie über die gesamte
-        Vorgangsdauer aktiv (Keep-Alive), damit nicht mehrfach nach dem
-        Passwort gefragt wird."""
-        self._log("Fordere Root-Rechte an (einmalig für diesen Vorgang) …")
+        self._log(tr("runtime.request_root"))
         try:
             keepalive_stop = prime_sudo_session()
         except RuntimeError as e:
@@ -3177,15 +3465,15 @@ class AuraPiApp(ctk.CTk):
         try:
             self._backup_worker_impl(dev_info, dest, mode, overwrite)
         except Exception as e:
-            self._log(f"Unerwarteter Fehler: {e!r}")
+            self._log(tr("runtime.unexpected_error", error=repr(e)))
             self._finish("Backup", -1, str(e))
         finally:
             keepalive_stop.set()
 
     def _backup_worker_impl(self, dev_info, dest, mode, overwrite):
         device = dev_info["device"]
-        self._log(f"=== Backup gestartet: {dev_info['raw_device']} "
-                   f"({dev_info['model']}, S/N {dev_info['serial']}) -> {dest} ===")
+        self._log(tr("backup.logs.started", device=dev_info["raw_device"],
+                     model=dev_info["model"], serial=dev_info["serial"], dest=dest))
 
         ok, reason = reverify_device(dev_info)
         if not ok:
@@ -3218,27 +3506,20 @@ class AuraPiApp(ctk.CTk):
             # dann erst aushängen.
             limit = total  # für "other" ggf. unten überschrieben
             if mode == "other":
-                self._log("Ermittle Partitionstabelle und Ende der letzten Partition "
-                           "(Kompakt-Methode) …")
+                self._log(tr("backup.logs.inspect_compact"))
                 limit, table_type = compact_copy_size(device, total)
-                self._log(f"Erkannte Partitionstabelle: {table_type!r}")
+                self._log(tr("backup.logs.table_detected", table=repr(table_type)))
                 if table_type != "msdos":
                     self._finish("Backup", -1,
-                                 f"Kompakt-Modus ist nur für MBR-Partitionstabellen ('msdos') "
-                                 f"freigegeben, erkannt wurde: {table_type!r}. Bei GPT fehlt "
-                                 f"sonst das sekundäre GPT-Backup am Geräteende, bei unbekanntem "
-                                 f"Layout ist die Sicherheit nicht gewährleistet. Bitte "
-                                 f"'Vollständiges Abbild' für dieses Gerät verwenden.")
+                                 tr("backup.logs.compact_not_mbr", table=repr(table_type)))
                     return
             elif mode == "rpi":
-                self._log("Prüfe, ob das Layout zu PiShrink passt (MBR + ext2/3/4-Root) …")
+                self._log(tr("backup.logs.check_rpi_layout"))
                 layout_ok, layout_reason = check_rpi_compatible_layout(device)
                 self._log(layout_reason)
                 if not layout_ok:
                     self._finish("Backup", -1,
-                                 f"Layout nicht mit dem 'Raspberry Pi OS'-Modus kompatibel: "
-                                 f"{layout_reason} Bitte 'Other OS' oder 'Vollständiges Abbild' "
-                                 f"verwenden.")
+                                 tr("backup.logs.rpi_layout_incompatible", reason=layout_reason))
                     return
 
             # --- Schritt B: aushängen. Für 'rpi'/'other' fail closed - beide
@@ -3246,20 +3527,13 @@ class AuraPiApp(ctk.CTk):
             # anschließende PiShrink-Verarbeitung. Für 'full' reicht ein
             # Warnhinweis: der Stillstands-Watchdog im Lesevorgang fängt ein
             # tatsächliches Hängenbleiben ohnehin ab. ---
-            self._log("Hänge eventuell gemountete Partitionen der Quelle aus "
-                       "(vermeidet Blockaden bei manchen Kartenlesern) …")
+            self._log(tr("backup.logs.unmount_source"))
             unmounted_cleanly = unmount_all_partitions(device, self._log)
             if not unmounted_cleanly:
                 if mode in ("rpi", "other"):
-                    self._finish("Backup", -1,
-                                 "Nicht alle Partitionen der Quelle konnten ausgehängt werden. "
-                                 "Bitte Dateimanager/andere Programme schließen, die die Karte "
-                                 "gerade offen haben könnten, dann 'Aktualisieren' klicken und "
-                                 "erneut versuchen.")
+                    self._finish("Backup", -1, tr("backup.logs.unmount_failed"))
                     return
-                self._log("Warnung: Nicht alle Partitionen konnten ausgehängt werden — "
-                           "falls das Backup gleich hängen bleibt, wird es nach 45s "
-                           "automatisch mit einer klaren Meldung abgebrochen.")
+                self._log(tr("backup.logs.unmount_warning"))
 
             # Kurze Stabilisierung nach dem Aushängen, bevor wir das Gerät
             # erneut anfassen - reduziert die beobachtete Race Condition mit
@@ -3270,7 +3544,7 @@ class AuraPiApp(ctk.CTk):
 
             ok, reason = reverify_device(dev_info)
             if not ok:
-                self._finish("Backup", -1, f"Nach dem Aushängen: {reason}")
+                self._finish("Backup", -1, tr("backup.logs.after_unmount", reason=reason))
                 return
 
             if mode == "full":
@@ -3288,8 +3562,8 @@ class AuraPiApp(ctk.CTk):
                 return
 
             if mode == "other":
-                self._log(f"Kopiere {human_size(limit)} von {human_size(total)} "
-                           f"(Rest der Karte ist ungenutzt) …")
+                self._log(tr("backup.logs.copy_compact", copy_size=human_size(limit),
+                             total_size=human_size(total)))
                 try:
                     rc, _ = backup_device_to_file(device, raw_tmp, self._log, self._progress,
                                                   limit, overwrite=True, limit_bytes=limit,
@@ -3298,15 +3572,15 @@ class AuraPiApp(ctk.CTk):
                     self._finish("Backup", -1, str(e))
                     return
                 if rc != 0:
-                    self._finish("Backup", rc, "dd ist fehlgeschlagen.")
+                    self._finish("Backup", rc, tr("backup.logs.dd_failed"))
                     return
 
                 raw_size = os.path.getsize(raw_tmp)
-                self._log("Komprimiere Abbild …")
+                self._log(tr("backup.logs.compress"))
                 digest = gzip_compress_file(raw_tmp, dest, self._log, self._progress,
                                             cancel_event=self._cancel_event)
 
-                self._log("Prüfe Integrität des erzeugten Abbilds (Validierungsdurchlauf) …")
+                self._log(tr("backup.logs.validate_image"))
                 try:
                     validated_size = full_gzip_size(dest)
                 except GZIP_ERRORS as e:
@@ -3314,7 +3588,7 @@ class AuraPiApp(ctk.CTk):
                         os.remove(dest)
                     except Exception:
                         pass
-                    self._finish("Backup", -1, f"Erzeugtes Abbild ist beschädigt: {e}")
+                    self._finish("Backup", -1, tr("backup.logs.image_corrupt", error=e))
                     return
                 if validated_size != raw_size:
                     try:
@@ -3322,18 +3596,17 @@ class AuraPiApp(ctk.CTk):
                     except Exception:
                         pass
                     self._finish("Backup", -1,
-                                 f"Integritätsprüfung fehlgeschlagen: erwartet {raw_size} Bytes, "
-                                 f"entpackt {validated_size} Bytes.")
+                                 tr("backup.logs.integrity_mismatch", expected=raw_size,
+                                    actual=validated_size))
                     return
 
                 write_sha256_sidecar(dest, digest)
-                self._log(f"Integrität OK. SHA-256 (komprimierte Datei): {digest}")
+                self._log(tr("backup.logs.integrity_ok_compressed", digest=digest))
                 self._finish("Backup", 0)
                 return
 
             # mode == "rpi": PiShrink-Weg (Layout bereits vor dem Aushängen geprüft)
-            self._log("Schritt 1/2: Rohes Abbild der Karte lesen (Root liest nur, "
-                       "unprivilegiert geschrieben) …")
+            self._log(tr("backup.logs.step1"))
             try:
                 rc, _ = backup_device_to_file(device, raw_tmp, self._log, self._progress, total,
                                               overwrite=True, cancel_event=self._cancel_event)
@@ -3341,27 +3614,27 @@ class AuraPiApp(ctk.CTk):
                 self._finish("Backup", -1, str(e))
                 return
             if rc != 0:
-                self._finish("Backup", rc, "dd ist fehlgeschlagen.")
+                self._finish("Backup", rc, tr("backup.logs.dd_failed"))
                 return
 
             ok, p_bin = verify_pishrink()
             if not ok:
-                self._finish("Backup", -1, f"PiShrink nicht mehr verifizierbar: {p_bin}")
+                self._finish("Backup", -1, tr("backup.logs.pishrink_unavailable", reason=p_bin))
                 try:
                     os.remove(raw_tmp)
                 except Exception:
                     pass
                 return
 
-            self._log("Schritt 2/2: Abbild mit verifiziertem PiShrink verkleinern und komprimieren …")
-            self._progress_indeterminate(True, "Shrink läuft …")
+            self._log(tr("backup.logs.step2"))
+            self._progress_indeterminate(True, tr("backup.logs.shrink_running"))
             rc = run_pkexec([p_bin, "-z", raw_tmp, raw_path], self._log,
                             cancel_event=self._cancel_event)
             self._progress_indeterminate(False)
             try:
                 os.remove(raw_tmp)
             except Exception as e:
-                self._log(f"Hinweis: Temporäre Datei {raw_tmp} konnte nicht entfernt werden: {e}")
+                self._log(tr("backup.logs.temp_remove_failed", path=raw_tmp, error=e))
 
             produced_gz = raw_path + ".gz"
             if rc == 0 and os.path.exists(produced_gz):
@@ -3374,13 +3647,10 @@ class AuraPiApp(ctk.CTk):
                     r = subprocess.run(privileged([chown, f"{os.getuid()}:{os.getgid()}", produced_gz]),
                                         capture_output=True, text=True)
                 except Exception as e:
-                    self._finish("Backup", -1,
-                                 f"Besitz der PiShrink-Ausgabe konnte nicht geändert werden: {e}")
+                    self._finish("Backup", -1, tr("backup.logs.chown_failed", error=e))
                     return
                 if r.returncode != 0:
-                    self._finish("Backup", -1,
-                                 f"Besitz der PiShrink-Ausgabe konnte nicht geändert werden: "
-                                 f"{r.stderr.strip()}")
+                    self._finish("Backup", -1, tr("backup.logs.chown_failed", error=r.stderr.strip()))
                     return
 
             if rc == 0 and os.path.exists(produced_gz) and produced_gz != dest:
@@ -3389,11 +3659,11 @@ class AuraPiApp(ctk.CTk):
                 shutil.move(produced_gz, dest)
 
             if rc == 0:
-                self._log("Prüfe Integrität des PiShrink-Abbilds (Validierungsdurchlauf) …")
+                self._log(tr("backup.logs.validate_pishrink"))
                 try:
                     full_gzip_size(dest)
                 except GZIP_ERRORS as e:
-                    self._finish("Backup", -1, f"PiShrink-Ausgabe ist beschädigt: {e}")
+                    self._finish("Backup", -1, tr("backup.logs.pishrink_corrupt", error=e))
                     return
                 hasher = hashlib.sha256()
                 with open(dest, "rb") as f:
@@ -3401,37 +3671,33 @@ class AuraPiApp(ctk.CTk):
                         hasher.update(chunk)
                 digest = hasher.hexdigest()
                 write_sha256_sidecar(dest, digest)
-                self._log(f"Integrität OK. SHA-256: {digest}")
+                self._log(tr("backup.logs.integrity_ok", digest=digest))
 
             self._finish("Backup", rc)
 
         except OperationCancelled:
             self._progress_indeterminate(False)
-            self._log("Backup abgebrochen - räume unfertige Dateien auf …")
+            self._log(tr("backup.logs.cancel_cleanup"))
             for p in (raw_tmp, raw_path + ".gz", dest, dest + ".part", dest + ".sha256.part"):
                 try:
                     if p and os.path.exists(p):
                         os.remove(p)
-                        self._log(f"Entfernt: {p}")
+                        self._log(tr("backup.logs.removed", path=p))
                 except Exception as e:
-                    self._log(f"Hinweis: {p} konnte nicht entfernt werden: {e}")
-            self._finish("Backup", -1, "Vom Nutzer abgebrochen.")
+                    self._log(tr("backup.logs.remove_failed", path=p, error=e))
+            self._finish("Backup", -1, tr("backup.logs.cancelled"))
 
     # ---------------- Restore Tab ----------------
 
     @staticmethod
-    def _build_warning_box(parent, body_text, achtung_text="Achtung:", icon_size=76,
-                            wraplength=560):
-        """Baut die 'Achtung'-Warnbox exakt nach Vorlage: links ein
-        quadratischer, roter Icon-Block (volle Boxhöhe) mit großem Warn-
-        dreieck, rechts daneben 'Achtung:' fett und der Fließtext normal-
-        gewichtet direkt daneben. Farben 1:1 aus dem Mockup-Screenshot
-        gesampelt: Rahmen/Icon-Block #A82D26, Box-Füllung #370D0B."""
+    def _build_warning_box(parent, body_text, attention_text=None, icon_size=76,
+                           wraplength=560):
+        """Build the red restore warning box and expose its labels for i18n."""
         warn = ctk.CTkFrame(parent, corner_radius=12, fg_color="#370D0B",
-                             border_width=2, border_color="#A82D26")
+                            border_width=2, border_color="#A82D26")
 
         icon_block = ctk.CTkFrame(warn, corner_radius=10, fg_color="#A82D26",
-                                   width=icon_size, height=icon_size)
+                                  width=icon_size, height=icon_size)
         icon_block.pack(side="left", padx=(6, 0), pady=6)
         icon_block.pack_propagate(False)
         ctk.CTkLabel(icon_block, text="⚠", font=ctk.CTkFont(size=int(icon_size * 0.42)),
@@ -3440,13 +3706,14 @@ class AuraPiApp(ctk.CTk):
         text_row = ctk.CTkFrame(warn, fg_color="transparent")
         text_row.pack(side="left", fill="both", expand=True, padx=(16, 16), pady=10)
 
-        ctk.CTkLabel(text_row, text=achtung_text,
-                     font=ctk.CTkFont(size=19, weight="bold"),
-                     text_color="white").pack(side="left", anchor="n", padx=(0, 16))
-        ctk.CTkLabel(text_row, text=body_text, justify="left", wraplength=wraplength,
-                     font=ctk.CTkFont(size=19), text_color="white").pack(
-            side="left", anchor="n")
-
+        warn._attention_label = ctk.CTkLabel(
+            text_row, text=attention_text or tr("restore.warning_title"),
+            font=ctk.CTkFont(size=19, weight="bold"), text_color="white")
+        warn._attention_label.pack(side="left", anchor="n", padx=(0, 16))
+        warn._body_label = ctk.CTkLabel(
+            text_row, text=body_text, justify="left", wraplength=wraplength,
+            font=ctk.CTkFont(size=19), text_color="white")
+        warn._body_label.pack(side="left", anchor="n")
         return warn
 
     def _build_restore_tab(self):
@@ -3454,102 +3721,113 @@ class AuraPiApp(ctk.CTk):
         f.grid_columnconfigure(1, weight=1)
         pad = {"padx": 14, "pady": 8}
 
-        ctk.CTkLabel(f, text="Image-Datei", font=ctk.CTkFont(weight="bold")).grid(
-            row=0, column=0, sticky="w", **pad)
+        image_label = ctk.CTkLabel(f, text=tr("restore.image_file_label"),
+                                   font=ctk.CTkFont(weight="bold"))
+        image_label.grid(row=0, column=0, sticky="w", **pad)
+        self._localize_widget(image_label, "restore.image_file_label")
+
         self.img_entry = ctk.CTkEntry(f, corner_radius=10, fg_color="#191a2e",
-                                       border_color="#3a7ebf", border_width=2)
+                                      border_color="#3a7ebf", border_width=2)
         self.img_entry.grid(row=1, column=0, columnspan=2, sticky="we", padx=14)
-        ctk.CTkButton(f, text="Durchsuchen…", width=140, corner_radius=10,
-                      command=self._choose_image).grid(row=1, column=2, padx=14)
+        browse_btn = ctk.CTkButton(f, text=tr("common.browse"), width=140,
+                                   corner_radius=10, command=self._choose_image)
+        browse_btn.grid(row=1, column=2, padx=14)
+        self._localize_widget(browse_btn, "common.browse")
 
-        ctk.CTkLabel(f, text="Ziel-Laufwerk", font=ctk.CTkFont(weight="bold")).grid(
-            row=2, column=0, sticky="w", padx=14, pady=(16, 8))
-        self.dst_menu = ctk.CTkComboBox(f, values=["Keine Geräte gefunden"], width=380,
-                                         corner_radius=10, state="readonly",
-                                         fg_color="#191a2e", border_color="#3a7ebf",
-                                         border_width=2, text_color="white",
-                                         button_color="#3a7ebf", button_hover_color="#2d6294",
-                                         dropdown_fg_color="#22223c", dropdown_text_color="white",
-                                         dropdown_hover_color="#2a2a44")
+        target_label = ctk.CTkLabel(f, text=tr("restore.target_drive_label"),
+                                    font=ctk.CTkFont(weight="bold"))
+        target_label.grid(row=2, column=0, sticky="w", padx=14, pady=(16, 8))
+        self._localize_widget(target_label, "restore.target_drive_label")
+
+        self.dst_menu = ctk.CTkComboBox(
+            f, values=[tr("devices.none")], width=380, corner_radius=10,
+            state="readonly", fg_color="#191a2e", border_color="#3a7ebf",
+            border_width=2, text_color="white", button_color="#3a7ebf",
+            button_hover_color="#2d6294", dropdown_fg_color="#22223c",
+            dropdown_text_color="white", dropdown_hover_color="#2a2a44")
         self.dst_menu.grid(row=3, column=0, columnspan=2, sticky="we", padx=14)
-        ctk.CTkButton(f, text="Aktualisieren", width=140, corner_radius=10,
-                      command=self.refresh_devices).grid(row=3, column=2, padx=14)
+        refresh_btn = ctk.CTkButton(f, text=tr("common.refresh"), width=140,
+                                    corner_radius=10, command=self.refresh_devices)
+        refresh_btn.grid(row=3, column=2, padx=14)
+        self._localize_widget(refresh_btn, "common.refresh")
 
-        warn = self._build_warning_box(
-            f,
-            body_text="Beim zurückspielen werden ALLE Daten auf dem\n"
-                       "Ziellaufwerk  unwiederruflich überschrieben.")
-        warn.grid(row=4, column=0, columnspan=3, sticky="we", padx=14, pady=(18, 8))
+        self._restore_warning = self._build_warning_box(
+            f, body_text=tr("restore.warning_body"),
+            attention_text=tr("restore.warning_title"))
+        self._restore_warning.grid(row=4, column=0, columnspan=3, sticky="we",
+                                   padx=14, pady=(18, 8))
+        self._localize_widget(self._restore_warning._attention_label,
+                              "restore.warning_title")
+        self._localize_widget(self._restore_warning._body_label,
+                              "restore.warning_body")
 
-        # Gleicher fester linker Abstand wie im Backup-Tab (siehe dort) -
-        # garantiert identische X-Position von Icon+Button auf beiden Tabs.
         action_frame_restore = ctk.CTkFrame(f, fg_color="transparent")
         self._action_frame_restore = action_frame_restore
         action_frame_restore.grid(row=5, column=0, columnspan=3, sticky="w",
-                                   padx=(_ACTION_FRAME_LEFT_PADX, 0), pady=(18, 10))
+                                  padx=(_ACTION_FRAME_LEFT_PADX, 0), pady=(18, 10))
 
-        self.icon_container_restore = ctk.CTkFrame(action_frame_restore, width=230, height=230,
-                                                     corner_radius=24,
-                                                     fg_color=("#c9d4e8", "#1a1a2e"))
+        self.icon_container_restore = ctk.CTkFrame(
+            action_frame_restore, width=230, height=230, corner_radius=24,
+            fg_color=("#c9d4e8", "#1a1a2e"))
         self.icon_container_restore.pack(side="left", padx=(0, 28))
         self.icon_container_restore.pack_propagate(False)
 
-        self.icon_label_restore = ctk.CTkLabel(self.icon_container_restore, text="", image=None)
+        self.icon_label_restore = ctk.CTkLabel(
+            self.icon_container_restore, text="", image=None)
         self.icon_label_restore.pack(expand=True)
-        # Direkt mit dem aktuellen Still-/Animations-Zustand synchronisieren,
-        # falls z.B. beim Programmstart bereits ein Bild geladen wurde.
         if getattr(self, "_icon_still_ctkimg", None) is not None:
             self.icon_label_restore.configure(image=self._icon_still_ctkimg)
 
-        self.restore_start_btn = ctk.CTkButton(action_frame_restore, text="Restore starten",
-                      height=40, width=180, corner_radius=12,
-                      fg_color="#B71C1C", hover_color="#8E0000",
-                      font=ctk.CTkFont(weight="bold"),
-                      command=self.start_restore)
+        self.restore_start_btn = ctk.CTkButton(
+            action_frame_restore, text=tr("restore.start"), height=40, width=180,
+            corner_radius=12, fg_color="#B71C1C", hover_color="#8E0000",
+            font=ctk.CTkFont(weight="bold"), command=self.start_restore)
         self.restore_start_btn.pack(side="left")
+        self._refresh_busy_ui_texts()
 
     def _choose_image(self):
         path = CTkFileDialog.ask_open_filename(
-            self, initial_dir=os.path.dirname(self.img_entry.get()) or os.path.expanduser("~"),
-            filetypes=[("Image-Dateien", "*.img *.img.gz *.gz"), ("Alle Dateien", "*")])
+            self,
+            initial_dir=os.path.dirname(self.img_entry.get()) or os.path.expanduser("~"),
+            filetypes=[(tr("file_dialog.image_files"), "*.img *.img.gz *.gz"),
+                       (tr("file_dialog.all_files"), "*")])
         if path:
             self.img_entry.delete(0, tk.END)
             self.img_entry.insert(0, path)
 
     def start_restore(self):
         if self.worker_thread and self.worker_thread.is_alive():
-            CTkMsg.showwarning("Bitte warten", "Es läuft bereits ein Vorgang.")
+            CTkMsg.showwarning(tr("restore.errors.active_title"),
+                               tr("restore.errors.active_message"))
             return
         image = self.img_entry.get().strip()
-        idx = self._selected_index(self.dst_menu, self.devices)
+        idx = self._selected_index(self.dst_menu, self.devices_restore)
         if not image or not os.path.exists(image):
-            CTkMsg.showerror("Keine Datei", "Bitte eine gültige Image-Datei auswählen.")
+            CTkMsg.showerror(tr("restore.errors.no_file_title"),
+                             tr("restore.errors.no_file_message"))
             return
         if not os.access(image, os.R_OK):
-            CTkMsg.showerror("Kein Zugriff",
-                                  "Du hast selbst kein Leserecht auf diese Datei — "
-                                  "das Tool nutzt Root nicht, um das zu umgehen.")
+            CTkMsg.showerror(tr("restore.errors.no_access_title"),
+                             tr("restore.errors.no_access_message"))
             return
         if idx is None:
-            CTkMsg.showerror("Kein Ziel", "Bitte ein Ziel-Laufwerk auswählen.")
+            CTkMsg.showerror(tr("restore.errors.no_target_title"),
+                             tr("restore.errors.no_target_message"))
             return
-        dev_info = dict(self.devices[idx])
+        dev_info = dict(self.devices_restore[idx])
         device = dev_info["device"]
         target_real = os.path.realpath(device)
 
         origin_state, origin_info = image_is_on_device(image, target_real)
         if origin_state == "on":
             CTkMsg.showerror(
-                "Ungültige Auswahl",
-                f"Die Image-Datei liegt selbst auf dem Ziel-Laufwerk ({origin_info}). "
-                "Restore würde die eigene Quelle während des Schreibens zerstören.")
+                tr("restore.errors.invalid_selection_title"),
+                tr("restore.errors.image_on_target", info=origin_info))
             return
         if origin_state == "unknown":
             CTkMsg.showerror(
-                "Herkunft nicht feststellbar",
-                f"Es konnte nicht sicher ermittelt werden, ob die Image-Datei auf dem "
-                f"Ziel-Laufwerk liegt ({origin_info}). Aus Sicherheitsgründen wird der "
-                f"Restore in diesem Fall abgelehnt statt es zu riskieren.")
+                tr("restore.errors.origin_unknown_title"),
+                tr("restore.errors.origin_unknown", info=origin_info))
             return
 
         is_gz = image.endswith(".gz")
@@ -3557,30 +3835,27 @@ class AuraPiApp(ctk.CTk):
             img_size = os.path.getsize(image)
             if img_size > dev_info["size_bytes"]:
                 CTkMsg.showerror(
-                    "Zielgerät zu klein",
-                    f"Image ist {human_size(img_size)} groß, "
-                    f"Ziel hat nur {human_size(dev_info['size_bytes'])}.")
+                    tr("restore.errors.target_too_small_title"),
+                    tr("restore.errors.target_too_small",
+                       image_size=human_size(img_size),
+                       target_size=human_size(dev_info["size_bytes"])))
                 return
 
-        detail = (f"Modell: {dev_info['model'] or '?'}\n"
-                  f"Seriennummer: {dev_info['serial']}\n"
-                  f"Größe: {human_size(dev_info['size_bytes'])}\n"
-                  f"Gerät: {dev_info['raw_device']}")
+        detail = self._device_detail(dev_info)
         if not self._confirm_restore_dialog(image, dev_info, detail):
             return
 
+        self._cancel_requested = False
         self._set_busy(True, kind="restore")
-        self.worker_thread = threading.Thread(target=self._restore_worker,
-                                               args=(image, dev_info), daemon=True)
+        self.worker_thread = threading.Thread(
+            target=self._restore_worker, args=(image, dev_info), daemon=True)
         self.worker_thread.start()
 
     def _confirm_restore_dialog(self, image, dev_info, detail):
-        """Ein einziges Fenster für die komplette Restore-Bestätigung:
-        Zusammenfassung, Warnung und Tipp-Bestätigung in einem statt in
-        zwei getrennten Popups."""
+        """Show the complete restore confirmation in the active language."""
         device = dev_info["raw_device"]
         top = ctk.CTkToplevel(self)
-        top.title("Restore bestätigen")
+        top.title(tr("restore.confirm.title"))
         top.geometry("520x420")
         top.transient(self)
         top.grab_set()
@@ -3589,22 +3864,24 @@ class AuraPiApp(ctk.CTk):
         frame = ctk.CTkFrame(top, corner_radius=0, fg_color="transparent")
         frame.pack(fill="both", expand=True, padx=22, pady=20)
 
-        ctk.CTkLabel(frame, text="Restore bestätigen", font=ctk.CTkFont(size=16, weight="bold")
-                     ).pack(anchor="w")
+        ctk.CTkLabel(
+            frame, text=tr("restore.confirm.title"),
+            font=ctk.CTkFont(size=16, weight="bold")).pack(anchor="w")
 
-        info_text = f"Image:\n{image}\n\nZiel:\n{detail}"
+        info_text = (tr("restore.confirm.image", image=image) + "\n\n" +
+                     tr("restore.confirm.target", detail=detail))
         ctk.CTkLabel(frame, text=info_text, justify="left", wraplength=460).pack(
             anchor="w", pady=(12, 12))
 
         warn_box = self._build_warning_box(
-            frame,
-            body_text="ALLE Daten auf diesem Laufwerk werden GELÖSCHT.\n"
-                       "Diesen Vorgang kann man NICHT rückgängig machen.",
+            frame, body_text=tr("restore.confirm.warning"),
+            attention_text=tr("restore.warning_title"),
             icon_size=60, wraplength=260)
         warn_box.pack(fill="x", pady=(0, 14))
 
-        ctk.CTkLabel(frame, text=f"Zur Bestätigung genau eintippen: {device}",
-                     justify="left", wraplength=460).pack(anchor="w", pady=(0, 6))
+        ctk.CTkLabel(
+            frame, text=tr("restore.confirm.type_exactly", device=device),
+            justify="left", wraplength=460).pack(anchor="w", pady=(0, 6))
         entry = ctk.CTkEntry(frame, width=460, corner_radius=10)
         entry.pack(pady=(0, 4))
         error_label = ctk.CTkLabel(frame, text="", text_color="#EF5350")
@@ -3615,7 +3892,7 @@ class AuraPiApp(ctk.CTk):
                 result["ok"] = True
                 top.destroy()
             else:
-                error_label.configure(text="Eingabe stimmt nicht mit dem Gerätenamen überein.")
+                error_label.configure(text=tr("restore.confirm.mismatch"))
 
         def cancel():
             result["ok"] = False
@@ -3623,9 +3900,9 @@ class AuraPiApp(ctk.CTk):
 
         btn_frame = ctk.CTkFrame(frame, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(14, 0))
-        ctk.CTkButton(btn_frame, text="Abbrechen", corner_radius=10, fg_color="gray30",
-                      command=cancel).pack(side="right", padx=(8, 0))
-        ctk.CTkButton(btn_frame, text="Restore starten", corner_radius=10,
+        ctk.CTkButton(btn_frame, text=tr("common.cancel"), corner_radius=10,
+                      fg_color="gray30", command=cancel).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(btn_frame, text=tr("restore.start"), corner_radius=10,
                       fg_color="#B71C1C", hover_color="#8E0000",
                       command=confirm).pack(side="right")
 
@@ -3636,9 +3913,8 @@ class AuraPiApp(ctk.CTk):
         return result["ok"]
 
     def _restore_worker(self, image, dev_info):
-        """Abgesicherter Wrapper, analog zu _backup_worker, inkl. einmaliger
-        sudo-Sitzung + Keep-Alive für die gesamte Vorgangsdauer."""
-        self._log("Fordere Root-Rechte an (einmalig für diesen Vorgang) …")
+        """Run restore with one sudo session and keep-alive for its duration."""
+        self._log(tr("runtime.request_root"))
         try:
             keepalive_stop = prime_sudo_session()
         except RuntimeError as e:
@@ -3647,40 +3923,38 @@ class AuraPiApp(ctk.CTk):
         try:
             self._restore_worker_impl(image, dev_info)
         except Exception as e:
-            self._log(f"Unerwarteter Fehler: {e!r}")
+            self._log(tr("runtime.unexpected_error", error=repr(e)))
             self._finish("Restore", -1, str(e))
         finally:
             keepalive_stop.set()
 
     def _restore_worker_impl(self, image, dev_info):
         device = dev_info["device"]
-        self._log(f"=== Restore gestartet: {image} -> {dev_info['raw_device']} "
-                   f"({dev_info['model']}, S/N {dev_info['serial']}) ===")
+        self._log(tr("restore.logs.started", image=image,
+                     device=dev_info["raw_device"], model=dev_info["model"],
+                     serial=dev_info["serial"]))
 
         ok, reason = reverify_device(dev_info)
         if not ok:
             self._finish("Restore", -1, reason)
             return
 
-        self._log("Hänge eventuell gemountete Partitionen des Ziels aus …")
+        self._log(tr("restore.logs.unmount_target"))
         if not unmount_all_partitions(device, self._log):
-            self._finish("Restore", -1,
-                         "Mindestens eine Partition konnte nicht ausgehängt werden.")
+            self._finish("Restore", -1, tr("restore.logs.unmount_failed"))
             return
 
         ok, reason = reverify_device(dev_info)
         if not ok:
-            self._finish("Restore", -1, f"Nach dem Aushängen: {reason}")
+            self._finish("Restore", -1, tr("restore.logs.after_unmount", reason=reason))
             return
 
-        # Konsistenz mit der Geräte-Reverifikation: auch die Image-Herkunft
-        # wird nach dem Aushängen erneut geprüft, nicht nur einmalig vor
-        # dem Bestätigungsdialog in start_restore().
         origin_state, origin_info = image_is_on_device(image, os.path.realpath(device))
         if origin_state != "off":
-            self._finish("Restore", -1,
-                         f"Image-Herkunft nach dem Aushängen nicht mehr sicher als "
-                         f"unabhängig vom Ziel bestätigbar ({origin_state}: {origin_info}).")
+            self._finish(
+                "Restore", -1,
+                tr("restore.logs.origin_recheck_failed",
+                   state=origin_state, info=origin_info))
             return
 
         try:
@@ -3690,25 +3964,29 @@ class AuraPiApp(ctk.CTk):
             return
 
         if image.endswith(".gz"):
-            self._log("Validiere Image-Größe (vollständiger Durchlauf 1/2) …")
+            self._log(tr("restore.logs.validate_size"))
             try:
                 total = full_gzip_size(
-                    image, progress_cb=lambda n: self._progress(
+                    image,
+                    progress_cb=lambda n: self._progress(
                         min(50.0, n * 50.0 / max(dev_info["size_bytes"], 1)),
-                        f"Validierung: {n} Bytes geprüft"),
+                        tr("restore.logs.validation_progress", bytes=n)),
                     max_size=dev_info["size_bytes"])
             except SafetyError as e:
                 self._finish("Restore", -1, str(e))
                 return
             except GZIP_ERRORS as e:
-                self._finish("Restore", -1, f"Image konnte nicht gelesen/entpackt werden: {e}")
+                self._finish("Restore", -1,
+                             tr("restore.logs.image_read_failed", error=e))
                 return
             if total > dev_info["size_bytes"]:
-                self._finish("Restore", -1,
-                             f"Entpacktes Image ist {human_size(total)} groß, "
-                             f"Ziel hat nur {human_size(dev_info['size_bytes'])}.")
+                self._finish(
+                    "Restore", -1,
+                    tr("restore.logs.decompressed_too_large",
+                       image_size=human_size(total),
+                       target_size=human_size(dev_info["size_bytes"])))
                 return
-            self._log(f"Validierung OK: {human_size(total)}. Schreibe Durchlauf 2/2 …")
+            self._log(tr("restore.logs.validation_ok", size=human_size(total)))
 
             def chunks():
                 with gzip.open(image, "rb") as fh:
@@ -3741,14 +4019,10 @@ class AuraPiApp(ctk.CTk):
         self.progress.set(0)
         self.progress.pack(fill="x", padx=14, pady=(14, 6))
 
-        self.status_var = tk.StringVar(value="Bereit.")
+        self.status_var = tk.StringVar(value=tr("common.ready"))
         ctk.CTkLabel(f, textvariable=self.status_var, anchor="w").pack(
             fill="x", padx=14)
 
-        # Kleiner Auf-/Zuklapp-Schalter für die rohe Shell-Ausgabe - im
-        # Normalbetrieb braucht man das CLI-Log selten, blendet es aber bei
-        # Bedarf (Fehlersuche) mit einem Klick wieder ein. Startet zugeklappt,
-        # damit das Fenster beim Programmstart kompakt und aufgeräumt wirkt.
         toggle_row = ctk.CTkFrame(f, fg_color="transparent")
         toggle_row.pack(fill="x", padx=14, pady=(6, 8))
         self._cli_visible = False
@@ -3759,14 +4033,10 @@ class AuraPiApp(ctk.CTk):
             command=self._toggle_cli_log)
         self._cli_toggle_btn.pack(side="left")
 
-        # Feste Höhe statt expand=True: innerhalb des scrollbaren Wurzel-
-        # Containers sizt sich der Inhalt auf seine natürliche Größe, "expand"
-        # hat dort keine Wirkung mehr. Eine feste Höhe hält das Log trotzdem
-        # gut lesbar; bei Bedarf sorgt die äußere Scrollbar für den Rest.
         self._log_text_pack_opts = dict(fill="both", expand=True, padx=14, pady=(0, 14))
-        self.log_text = ctk.CTkTextbox(f, corner_radius=10, state="disabled",
-                                        wrap="word", height=170,
-                                        font=ctk.CTkFont(family="monospace", size=12))
+        self.log_text = ctk.CTkTextbox(
+            f, corner_radius=10, state="disabled", wrap="word", height=170,
+            font=ctk.CTkFont(family="monospace", size=12))
         # Bewusst NICHT gepackt - bleibt unsichtbar, bis der Nutzer per CLI-
         # Toggle aufklappt (siehe _toggle_cli_log).
 
@@ -3794,14 +4064,17 @@ class AuraPiApp(ctk.CTk):
         self.log_queue.put(("progress_mode", (on, msg)))
 
     def _finish(self, kind, rc, extra=""):
+        operation = self._operation_name(kind)
         if rc == 0:
-            self.log_queue.put(("log", f"=== {kind} erfolgreich abgeschlossen. ==="))
-            self.log_queue.put(("status", f"{kind} erfolgreich abgeschlossen."))
-            self.log_queue.put(("popup", (None,
-                                          f"Das {kind} wurde erfolgreich abgeschlossen.", "success")))
+            self.log_queue.put(("log", tr("runtime.finish.success_log", operation=operation)))
+            self.log_queue.put(("status", tr("runtime.finish.success_status", operation=operation)))
+            self.log_queue.put(("popup", (
+                None, tr("runtime.finish.success_popup", operation=operation), "success")))
         else:
-            self.log_queue.put(("log", f"=== {kind} fehlgeschlagen (Code {rc}). {extra} ==="))
-            self.log_queue.put(("status", f"{kind} fehlgeschlagen. {extra}"))
+            self.log_queue.put(("log", tr("runtime.finish.failure_log",
+                                           operation=operation, code=rc, extra=extra)))
+            self.log_queue.put(("status", tr("runtime.finish.failure_status",
+                                              operation=operation, extra=extra)))
         self.log_queue.put(("busy", False))
 
     def _poll_log_queue(self):
@@ -3820,6 +4093,7 @@ class AuraPiApp(ctk.CTk):
                         self.progress.configure(mode="determinate")
                     self.progress.set(max(0.0, min(1.0, pct / 100.0)))
                     self.status_var.set(msg)
+                    self._status_is_ready = False
                 elif kind == "progress_mode":
                     on, msg = payload
                     if on:
@@ -3830,8 +4104,10 @@ class AuraPiApp(ctk.CTk):
                         self.progress.configure(mode="determinate")
                     if msg:
                         self.status_var.set(msg)
+                        self._status_is_ready = False
                 elif kind == "status":
                     self.status_var.set(payload)
+                    self._status_is_ready = False
                 elif kind == "popup":
                     title, msg, popup_kind = payload
                     if popup_kind == "success":
@@ -3847,49 +4123,29 @@ class AuraPiApp(ctk.CTk):
         self.after(200, self._poll_log_queue)
 
     def _set_busy(self, busy, kind=None):
-        """Backup-/Restore-Buttons während eines laufenden Vorgangs anpassen.
-        Der Button des GERADE LAUFENDEN Vorgangs (kind='backup'/'restore')
-        bleibt bedienbar - beim Backup-Button sogar als aktiver 'Abbrechen'-
-        Button, da Backups sauber abgebrochen werden können (siehe
-        _cancel_backup). Der jeweils andere Button wird währenddessen
-        deaktiviert. Schaltet außerdem das Icon zwischen Still-Bild (kein
-        Vorgang aktiv/Vorgang beendet) und animierter Lotus-Sequenz (Vorgang
-        läuft) um."""
-        if busy:
-            if kind == "backup":
-                self.backup_start_btn.configure(state="normal", text="Backup abbrechen",
-                                                 fg_color="#B71C1C", hover_color="#8f1616",
-                                                 command=self._cancel_backup)
-                self.restore_start_btn.configure(state="disabled", text="Bitte warten …",
-                                                  fg_color="gray30")
-            elif kind == "restore":
-                self.restore_start_btn.configure(state="disabled", text="Restore läuft …",
-                                                  fg_color="gray30")
-                self.backup_start_btn.configure(state="disabled", text="Bitte warten …",
-                                                 fg_color="gray30")
-            else:
-                self.backup_start_btn.configure(state="disabled", text="Bitte warten …", fg_color="gray30")
-                self.restore_start_btn.configure(state="disabled", text="Bitte warten …", fg_color="gray30")
-            self.set_icon_animated_gif()
+        """Update operation state without coupling logic to translated labels."""
+        was_busy = self._busy
+        self._busy = bool(busy)
+        if self._busy:
+            if kind is not None:
+                self._busy_kind = kind
+            self._status_is_ready = False
         else:
-            self.backup_start_btn.configure(state="normal", text="Backup starten",
-                                             fg_color=self._default_btn_color,
-                                             hover_color=self._default_btn_hover_color,
-                                             command=self.start_backup)
-            self.restore_start_btn.configure(state="normal", text="Restore starten",
-                                              fg_color="#B71C1C")
+            self._busy_kind = None
+            self._cancel_requested = False
+        self._refresh_busy_ui_texts()
+        if self._busy and not was_busy:
+            self.set_icon_animated_gif()
+        elif not self._busy and was_busy:
             self.set_icon_still()
 
     def _cancel_backup(self):
-        """Fordert den Abbruch eines laufenden Backups an. Die eigentliche
-        Abbruch-/Aufräumlogik (Prozess killen, unfertige .part-Dateien
-        löschen, OperationCancelled auslösen) läuft bereits vollständig in
-        backup_device_to_file/gzip_compress_file/run_pkexec - hier wird nur
-        das Event gesetzt, auf das diese Funktionen bereits reagieren."""
+        """Request cancellation; worker-side code performs cleanup safely."""
         if not (self.worker_thread and self.worker_thread.is_alive()):
             return
-        self.backup_start_btn.configure(state="disabled", text="Breche ab …")
-        self._log("Abbruch angefordert - warte auf sauberes Beenden …")
+        self._cancel_requested = True
+        self._refresh_busy_ui_texts()
+        self._log(tr("runtime.cancel_requested"))
         self._cancel_event.set()
 
     # ---------------- Geräte-Liste ----------------
@@ -3905,16 +4161,26 @@ class AuraPiApp(ctk.CTk):
         return None
 
     def refresh_devices(self):
-        self.devices = list_removable_devices()
-        values = [d["display"] for d in self.devices] or ["Keine Geräte gefunden"]
-        self.src_menu.configure(values=values)
-        self.dst_menu.configure(values=values)
-        self.src_menu.set(values[0])
-        self.dst_menu.set(values[0])
+        show_unstable = self.show_unstable_var.get() if hasattr(self, "show_unstable_var") else False
+        self.devices = list_removable_devices(include_unstable=show_unstable)
+        for device_info in self.devices:
+            device_info["display"] = self._format_device_display(device_info)
+        src_values = [d["display"] for d in self.devices] or [tr("devices.none")]
+        self.src_menu.configure(values=src_values)
+        self.src_menu.set(src_values[0])
+
+        # Restore-Ziel bleibt bewusst IMMER fail-closed, unabhängig vom
+        # "Weitere Medien anzeigen"-Schalter im Backup-Tab (der gilt
+        # explizit nur für die Backup-Quelle).
+        self.devices_restore = list_removable_devices(include_unstable=False)
+        for device_info in self.devices_restore:
+            device_info["display"] = self._format_device_display(device_info)
+        dst_values = [d["display"] for d in self.devices_restore] or [tr("devices.none")]
+        self.dst_menu.configure(values=dst_values)
+        self.dst_menu.set(dst_values[0])
+
         if not self.devices:
-            self._log("Keine verifizierbaren Wechseldatenträger gefunden. "
-                       "Hinweis: Geräte ohne Seriennummer/by-id-Pfad werden "
-                       "aus Sicherheitsgründen nicht angezeigt.")
+            self._log(tr("devices.none_verified"))
 
 
 if __name__ == "__main__":
