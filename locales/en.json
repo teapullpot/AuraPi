@@ -1,0 +1,270 @@
+{
+  "_meta": {
+    "code": "en",
+    "language": "English",
+    "native_name": "English",
+    "short": "EN"
+  },
+  "fatal": {
+    "run_as_root": "Please do NOT run AuraPi as root. The app requests root privileges selectively via sudo -A."
+  },
+  "common": {
+    "ok": "OK",
+    "yes": "Yes",
+    "no": "No",
+    "cancel": "Cancel",
+    "save": "Save",
+    "open": "Open",
+    "browse": "Browse…",
+    "refresh": "Refresh",
+    "retry": "Check again",
+    "continue": "Continue?",
+    "ready": "Ready."
+  },
+  "file_dialog": {
+    "choose": "Choose file",
+    "save_as": "Save as",
+    "open_file": "Open file",
+    "parent": "⬆ Parent folder",
+    "filename": "File name:",
+    "all_files": "All files",
+    "image_files": "Image files",
+    "read_dir_error": "Could not read directory: {error}"
+  },
+  "askpass": {
+    "title": "AuraPi — Root privileges",
+    "heading": "AuraPi requires root privileges",
+    "message": "Enter your user password (valid for the entire session; no repeated prompt required):",
+    "cancel": "Cancel",
+    "confirm": "Confirm"
+  },
+  "tabs": {
+    "backup": "Create backup",
+    "restore": "Restore image"
+  },
+  "devices": {
+    "none": "No devices found",
+    "note": "Only devices with a serial number and stable by-id identifier are shown.",
+    "removable": "Removable drive",
+    "none_verified": "No verified removable drives found. Note: devices without a serial number/by-id path are hidden for safety reasons.",
+    "show_more": "Show more devices",
+    "show_more_tooltip": "Also shows drives without a serial number or a stable by-id path (e.g. exotic USB adapters). These cannot be re-verified before writing with the same confidence as other devices - only enable this if you are absolutely sure which device is selected.",
+    "unstable_tag": "no stable identifier!"
+  },
+  "backup": {
+    "source_label": "Source (SD card / USB drive)",
+    "target_file_label": "Target file",
+    "mode_title": "Backup type",
+    "start": "Start backup",
+    "cancel": "Cancel backup",
+    "cancelling": "Cancelling…",
+    "modes": {
+      "rpi": "Raspberry Pi OS",
+      "other": "Other OS",
+      "full": "Full image"
+    },
+    "tooltips": {
+      "rpi": "Maximum shrinking with PiShrink. Suitable only for layouts with a FAT boot partition and an ext4 root partition (standard Raspberry Pi OS). Other layouts are rejected safely.",
+      "other": "Copies all partitions unchanged up to the end of the last partition. Filesystem-independent, but not suitable for every boot/partition layout. Not available for GPT drives because the backup GPT at the end of the device would be missing.",
+      "full": "Copies the entire card 1:1, including unused space. Works with every layout, including GPT, UBI/UBIFS and special bootloaders. Largest file, but the safest choice for unknown or exotic systems."
+    },
+    "pishrink_note": "(required only for \"Raspberry Pi OS\" mode)",
+    "confirm_title": "Confirm backup",
+    "confirm_source": "Source:\n{detail}",
+    "confirm_target": "Target: {target}",
+    "confirm_mode": "Mode: {mode}",
+    "details": {
+      "model": "Model: {value}",
+      "serial": "Serial number: {value}",
+      "size": "Size: {value}",
+      "device": "Device: {value}"
+    },
+    "errors": {
+      "active_title": "Please wait",
+      "active_message": "An operation is already running.",
+      "no_source_title": "No source",
+      "no_source_message": "Select a source drive first.",
+      "no_target_title": "No target",
+      "no_target_message": "Enter a target file name.",
+      "invalid_target_title": "Invalid target",
+      "device_path_target": "The target must not be a device path (/dev/...).",
+      "symlink_target": "The target path is a symlink — rejected.",
+      "wrong_extension_title": "Wrong file extension",
+      "compressed_extension": "The 'Raspberry Pi OS' and 'Other OS' modes create compressed files and require the .img.gz extension.",
+      "full_extension": "The 'Full image' mode does not create a compressed file. Use an extension without .gz (for example .img).",
+      "file_exists_title": "File already exists",
+      "file_exists_message": "{path} already exists. Overwrite?",
+      "pishrink_title": "PiShrink not verified"
+    },
+    "logs": {
+      "started": "=== Backup started: {device} ({model}, S/N {serial}) -> {dest} ===",
+      "inspect_compact": "Reading partition table and end of last partition (compact method)…",
+      "table_detected": "Detected partition table: {table}",
+      "compact_not_mbr": "Compact mode is allowed only for MBR partition tables ('msdos'); detected: {table}. With GPT, the secondary GPT backup at the end of the device would be missing; with an unknown layout, safety cannot be guaranteed. Use 'Full image' for this device.",
+      "check_rpi_layout": "Checking whether the layout is compatible with PiShrink (MBR + ext2/3/4 root)…",
+      "rpi_layout_incompatible": "Layout is not compatible with 'Raspberry Pi OS' mode: {reason} Use 'Other OS' or 'Full image'.",
+      "unmount_source": "Unmounting any mounted source partitions (avoids lockups with some card readers)…",
+      "unmount_failed": "Not all source partitions could be unmounted. Close the file manager or other programs that may have the card open, click 'Refresh', and try again.",
+      "unmount_warning": "Warning: not all partitions could be unmounted. If the backup stalls, it will be stopped automatically after 45 seconds with a clear message.",
+      "after_unmount": "After unmounting: {reason}",
+      "copy_compact": "Copying {copy_size} of {total_size} (the rest of the card is unused)…",
+      "dd_failed": "dd failed.",
+      "compress": "Compressing image…",
+      "validate_image": "Checking integrity of the generated image (validation pass)…",
+      "image_corrupt": "Generated image is corrupted: {error}",
+      "integrity_mismatch": "Integrity check failed: expected {expected} bytes, decompressed {actual} bytes.",
+      "integrity_ok_compressed": "Integrity OK. SHA-256 (compressed file): {digest}",
+      "step1": "Step 1/2: Reading raw card image (root reads only; unprivileged process writes)…",
+      "pishrink_unavailable": "PiShrink is no longer verifiable: {reason}",
+      "step2": "Step 2/2: Shrinking and compressing image with verified PiShrink…",
+      "shrink_running": "Shrink running…",
+      "temp_remove_failed": "Note: temporary file {path} could not be removed: {error}",
+      "chown_failed": "Ownership of the PiShrink output could not be changed: {error}",
+      "validate_pishrink": "Checking integrity of the PiShrink image (validation pass)…",
+      "pishrink_corrupt": "PiShrink output is corrupted: {error}",
+      "integrity_ok": "Integrity OK. SHA-256: {digest}",
+      "cancel_cleanup": "Backup cancelled — cleaning up incomplete files…",
+      "removed": "Removed: {path}",
+      "remove_failed": "Note: {path} could not be removed: {error}",
+      "cancelled": "Cancelled by user."
+    }
+  },
+  "restore": {
+    "image_file_label": "Image file",
+    "target_drive_label": "Target drive",
+    "start": "Start restore",
+    "running": "Restore running…",
+    "warning_title": "Warning:",
+    "warning_body": "Restoring will irreversibly overwrite ALL data on the\ntarget drive.",
+    "errors": {
+      "active_title": "Please wait",
+      "active_message": "An operation is already running.",
+      "no_file_title": "No file",
+      "no_file_message": "Select a valid image file.",
+      "no_access_title": "No access",
+      "no_access_message": "Your user account cannot read this file. AuraPi does not use root privileges to bypass that restriction.",
+      "no_target_title": "No target",
+      "no_target_message": "Select a target drive.",
+      "invalid_selection_title": "Invalid selection",
+      "image_on_target": "The image file is located on the target drive itself ({info}). Restoring would destroy its own source while writing.",
+      "origin_unknown_title": "Source location unknown",
+      "origin_unknown": "AuraPi could not safely determine whether the image file is on the target drive ({info}). For safety, restore is rejected instead of taking the risk.",
+      "target_too_small_title": "Target drive too small",
+      "target_too_small": "Image is {image_size}, but the target has only {target_size}."
+    },
+    "confirm": {
+      "title": "Confirm restore",
+      "image": "Image:\n{image}",
+      "target": "Target:\n{detail}",
+      "warning": "ALL data on this drive will be DELETED.\nThis operation CANNOT be undone.",
+      "type_exactly": "To confirm, type exactly: {device}",
+      "mismatch": "The entry does not match the device name."
+    },
+    "logs": {
+      "started": "=== Restore started: {image} -> {device} ({model}, S/N {serial}) ===",
+      "unmount_target": "Unmounting any mounted target partitions…",
+      "unmount_failed": "At least one partition could not be unmounted.",
+      "after_unmount": "After unmounting: {reason}",
+      "origin_recheck_failed": "After unmounting, the image source can no longer be safely confirmed as independent of the target ({state}: {info}).",
+      "validate_size": "Validating image size (full pass 1/2)…",
+      "validation_progress": "Validation: {bytes} bytes checked",
+      "image_read_failed": "Image could not be read/decompressed: {error}",
+      "decompressed_too_large": "Decompressed image is {image_size}, but the target has only {target_size}.",
+      "validation_ok": "Validation OK: {size}. Writing pass 2/2…"
+    }
+  },
+  "pishrink": {
+    "verified": "✓ PiShrink verified (hash & root ownership OK): {info}",
+    "not_verified": "✗ PiShrink not verified ({info}) — see installation instructions.",
+    "install_hint": "PiShrink is not installed or cannot be verified.\n\nManual installation of the CHECKED, pinned version:\n\n  curl -fsSL \\\n    https://raw.githubusercontent.com/Drewsif/PiShrink/{commit}/pishrink.sh \\\n    -o /tmp/pishrink.sh\n  sha256sum /tmp/pishrink.sh\n  # must match exactly: {sha256}\n  sudo install -o root -g root -m 755 /tmp/pishrink.sh {path}\n\nThen click \"Check again\" in AuraPi.",
+    "verify": {
+      "not_found": "not found",
+      "stat_failed": "stat failed: {error}",
+      "not_root": "not owned by root (uid={uid})",
+      "writable": "is writable by group/others",
+      "hash_mismatch": "hash mismatch (found: {digest}…)"
+    }
+  },
+  "runtime": {
+    "request_root": "Requesting root privileges (once for this operation)…",
+    "unexpected_error": "Unexpected error: {error}",
+    "please_wait": "Please wait…",
+    "cancel_requested": "Cancellation requested — waiting for a clean shutdown…",
+    "finish": {
+      "success_log": "=== {operation} completed successfully. ===",
+      "success_status": "{operation} completed successfully.",
+      "success_popup": "{operation} completed successfully.",
+      "failure_log": "=== {operation} failed (code {code}). {extra} ===",
+      "failure_status": "{operation} failed. {extra}"
+    }
+  },
+  "operations": {
+    "backup": "Backup",
+    "restore": "Restore"
+  },
+  "system": {
+    "sudo_missing": "sudo was not found.",
+    "auth_failed": "Root authentication failed: {error}",
+    "binary_missing": "Required program '{name}' was not found.",
+    "image_source": {
+      "findmnt_missing": "findmnt is unavailable",
+      "source_unknown": "Could not determine the source drive of the image file",
+      "parent_unknown": "Could not determine the parent drive of {source}"
+    },
+    "device": {
+      "missing": "Device {device} is no longer available as a verified removable drive.",
+      "size_changed": "Size of {device} changed ({old} -> {new}). Aborting for safety.",
+      "serial_changed": "Serial number of {device} no longer matches. Aborting for safety.",
+      "model_changed": "Model name of {device} no longer matches ({old} -> {new}). Aborting for safety."
+    },
+    "unmount": {
+      "attempt": "Unmounting {child}…",
+      "failed": "Could not unmount {child}: {error}",
+      "remounted": "Partition(s) were automatically mounted again (auto-mount service) — attempt {attempt}/{retries}…"
+    },
+    "cancel": {
+      "process": "Cancellation requested — stopping {label}…",
+      "pishrink": "PiShrink run cancelled by user.",
+      "read": "Read operation cancelled by user.",
+      "write": "Write operation cancelled by user.",
+      "compression": "Compression cancelled by user."
+    },
+    "labels": {
+      "operation": "operation",
+      "pishrink_run": "PiShrink run",
+      "write_operation": "write operation"
+    },
+    "backup_io": {
+      "target_symlink": "Target path is a symlink — rejected.",
+      "target_exists": "Target file already exists (no overwrite confirmation).",
+      "cancel_read": "Cancellation requested — stopping read operation…",
+      "stall": "No read progress for {seconds}s — the card reader is probably blocked (for example by a still-mounted partition). Aborting.",
+      "read_progress": "{written} of {total} bytes read",
+      "stall_error": "Read operation aborted after {seconds}s without progress. Manually unmount partitions (umount) and try again, or use another card reader/USB port."
+    },
+    "restore_io": {
+      "write_progress": "{written} of {total} bytes written",
+      "cancelled": "Restore cancelled — the target drive is now incomplete and not bootable.",
+      "write_error": "Error while writing: {error}"
+    },
+    "partition": {
+      "unknown_size": "Unknown parted size: {value}",
+      "blkid_missing": "blkid was not found",
+      "blkid_timeout": "blkid did not respond within {seconds}s",
+      "blkid_failed": "blkid failed: {error}",
+      "table_read_failed": "Partition table could not be read: {error}",
+      "table_wrong": "Partition table is {table}; PiShrink requires an MBR table ('dos').",
+      "partitions_read_failed": "Partitions could not be read individually.",
+      "too_few": "Fewer than two partitions were found.",
+      "last_fs_wrong": "Last partition has filesystem {filesystem}; PiShrink requires ext2/ext3/ext4.",
+      "layout_ok": "Compatible layout (MBR, last partition {filesystem})."
+    },
+    "compression": {
+      "cancel_request": "Cancellation requested — stopping compression…",
+      "progress": "Compressing: {written} of {total} bytes"
+    },
+    "gzip": {
+      "too_large": "Decompressed image already exceeds the target size after {current} (target: {max_size}) — aborting."
+    }
+  }
+}
