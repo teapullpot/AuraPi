@@ -188,7 +188,10 @@ Neben `aurapi.py` werden benötigt:
 - **v0.1.25** — Neues JSON-basiertes, erweiterbares Lokalisierungssystem
   (Englisch als Standard/Fallback, Deutsch komplett enthalten). Live
   umschaltbarer Sprachwähler im Header; auch der Root/sudo-Passwort-Dialog
-  folgt der gewählten Sprache.
+  folgt der gewählten Sprache. Zusätzlich ein optionaler,
+  opt-in-basierter "Weitere Medien anzeigen"-Filter im Backup-Tab für
+  Laufwerke ohne stabile Kennung (siehe oben); betrifft ausschließlich
+  die Backup-Quelle, nie das Restore-Ziel.
 - **v0.1.23** — Bugfix: `blkid` meldet MBR-Partitionstabellen als `"dos"`,
   nicht als `"msdos"` (im Unterschied zu `parted`). Der Kompakt-Modus
   ("Other OS") hat dadurch MBR-Datenträger fälschlich abgelehnt, u. a. bei
