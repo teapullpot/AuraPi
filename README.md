@@ -183,7 +183,9 @@ Required alongside `aurapi.py`:
 - **v0.1.25** — Added a JSON-based, extensible localization system
   (English default/fallback, German included). Live language switcher in
   the header; the root/sudo password dialog follows the selected
-  language too.
+  language too. Added an optional, opt-in "Show more devices" filter on
+  the Backup tab for drives without a stable identifier (see above);
+  affects only the backup source, never the restore target.
 - **v0.1.23** — Bugfix: `blkid` reports MBR partition tables as `"dos"`,
   not `"msdos"` (unlike `parted`). Compact mode ("Other OS") incorrectly
   rejected MBR drives as a result, notably with OpenWrt images. Fixed by
